@@ -18,6 +18,7 @@ interface RequestItem {
   emergency_level: string;
   reason: string;
   required_date: string;
+  doctor_name: string;
   status: string;
 }
 

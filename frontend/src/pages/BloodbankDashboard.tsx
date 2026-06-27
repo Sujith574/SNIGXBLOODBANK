@@ -20,6 +20,7 @@ interface Request {
   emergency_level: 'low' | 'medium' | 'high';
   reason: string;
   required_date: string;
+  doctor_name: string;
 }
 
 interface DonorRecord {
