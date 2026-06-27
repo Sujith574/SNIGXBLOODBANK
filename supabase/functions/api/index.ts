@@ -287,10 +287,186 @@ Deno.serve(async (req: Request) => {
     if (req.method === "POST" && path === "/register") return await register(req);
     if (req.method === "POST" && path === "/verify-email") return await verifyEmail(req);
     if (req.method === "POST" && path === "/login") return await login(req);
+
+    // Get Auth Context (userId and role)
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    if (!token) return json({ success: false, message: "Unauthorized" }, 401);
+
+    // Verify token & extract user profile information
+    const userProfileRes = await fetch(SUPABASE_URL + "/auth/v1/user", {
+      headers: {
+        "Authorization": "Bearer " + token,
+        "apikey": ANON_KEY,
+      },
+    });
+    if (!userProfileRes.ok) return json({ success: false, message: "Invalid access token" }, 401);
+    const userData = await userProfileRes.json();
+    const userId = userData.id;
+
+    // Fetch user profile role from DB
+    const dbProfileRes = await dbSelect("profiles", "id=eq." + userId + "&select=role,name&limit=1");
+    if (!dbProfileRes.ok || !Array.isArray(dbProfileRes.data) || dbProfileRes.data.length === 0) {
+      return json({ success: false, message: "User profile not found" }, 404);
+    }
+    const userRole = dbProfileRes.data[0].role;
+    const userName = dbProfileRes.data[0].name;
+
+    // ─── DASHBOARD STATS ───
+    if (req.method === "GET" && path === "/dashboard/stats") {
+      if (userRole === "donor") {
+        const eligible = await dbSelect("donors", "id=eq." + userId + "&select=eligibility_status,last_donation_date,blood_group&limit=1");
+        const activeRequests = await dbSelect("blood_requests", "status=eq.pending&limit=10");
+        const appts = await dbSelect("appointments", "donor_id=eq." + userId + "&select=appointment_date_time,status,hospital_id&limit=5");
+        return json({
+          success: true,
+          stats: {
+            eligibility: eligible.data?.[0] ?? { eligibility_status: "eligible" },
+            requests: activeRequests.data ?? [],
+            appointments: appts.data ?? [],
+          }
+        });
+      } else if (userRole === "hospital") {
+        const inv = await dbSelect("blood_inventory", "hospital_id=eq." + userId);
+        const reqs = await dbSelect("blood_requests", "hospital_id=eq." + userId + "&limit=10");
+        const appts = await dbSelect("appointments", "hospital_id=eq." + userId + "&limit=10");
+        const hospProfile = await dbSelect("hospitals", "id=eq." + userId + "&limit=1);");
+        return json({
+          success: true,
+          stats: {
+            inventory: inv.data ?? [],
+            requests: reqs.data ?? [],
+            appointments: appts.data ?? [],
+            hospitalInfo: hospProfile.data?.[0] ?? { is_approved: false }
+          }
+        });
+      } else if (userRole === "admin") {
+        const totalUsers = await dbSelect("profiles", "select=id");
+        const unapprovedHospitals = await dbSelect("hospitals", "is_approved=eq.false");
+        const requests = await dbSelect("blood_requests", "select=id");
+        return json({
+          success: true,
+          stats: {
+            totalUsersCount: Array.isArray(totalUsers.data) ? totalUsers.data.length : 0,
+            unapprovedHospitals: unapprovedHospitals.data ?? [],
+            totalRequestsCount: Array.isArray(requests.data) ? requests.data.length : 0,
+          }
+        });
+      }
+    }
+
+    // ─── BLOOD INVENTORY (HOSPITAL ONLY) ───
+    if (path === "/blood-inventory") {
+      if (req.method === "GET") {
+        const inv = await dbSelect("blood_inventory", "hospital_id=eq." + userId);
+        return json({ success: true, data: inv.data ?? [] });
+      }
+      if (req.method === "POST" && userRole === "hospital") {
+        const body = await req.json();
+        const res = await dbUpsert("blood_inventory", {
+          hospital_id: userId,
+          blood_group: body.bloodGroup,
+          units_available: body.units,
+          updated_at: new Date().toISOString()
+        });
+        return json({ success: res.ok, message: res.ok ? "Inventory updated" : "Inventory update failed" });
+      }
+    }
+
+    // ─── APPOINTMENTS BOOKING ───
+    if (path === "/appointments") {
+      if (req.method === "GET") {
+        const appts = userRole === "donor" 
+          ? await dbSelect("appointments", "donor_id=eq." + userId) 
+          : await dbSelect("appointments", "hospital_id=eq." + userId);
+        return json({ success: true, data: appts.data ?? [] });
+      }
+      if (req.method === "POST" && userRole === "donor") {
+        const body = await req.json();
+        const res = await dbUpsert("appointments", {
+          donor_id: userId,
+          hospital_id: body.hospitalId,
+          appointment_date_time: body.dateTime,
+          status: "scheduled",
+          note: body.note
+        });
+        return json({ success: res.ok, message: res.ok ? "Appointment booked" : "Booking failed" });
+      }
+    }
+
+    // ─── BLOOD REQUESTS ───
+    if (path === "/blood-requests") {
+      if (req.method === "GET") {
+        const reqs = await dbSelect("blood_requests", "order=created_at.desc");
+        return json({ success: true, data: reqs.data ?? [] });
+      }
+      if (req.method === "POST" && userRole === "hospital") {
+        const body = await req.json();
+        const res = await dbUpsert("blood_requests", {
+          patient_name: body.patientName,
+          age: Number(body.age),
+          gender: body.gender,
+          blood_group: body.bloodGroup,
+          units_required: Number(body.unitsRequired),
+          hospital_id: userId,
+          doctor_name: body.doctorName,
+          emergency_level: body.emergencyLevel,
+          reason: body.reason,
+          required_date: body.requiredDate,
+          status: "pending"
+        });
+        return json({ success: res.ok, message: res.ok ? "Blood request published" : "Request creation failed" });
+      }
+    }
+
+    // ─── HOSPITAL VERIFICATION (ADMIN ONLY) ───
+    if (path === "/admin/approve-hospital" && req.method === "POST" && userRole === "admin") {
+      const body = await req.json();
+      const res = await dbPatch("hospitals", "id=eq." + body.hospitalId, { is_approved: true });
+      return json({ success: res.ok, message: res.ok ? "Hospital approved successfully" : "Approval failed" });
+    }
+
+    // ─── HOSPITAL PROFILE REGISTRATION ───
+    if (path === "/hospital/profile" && req.method === "POST" && userRole === "hospital") {
+      const body = await req.json();
+      const res = await dbUpsert("hospitals", {
+        id: userId,
+        registration_number: body.registrationNumber,
+        license_number: body.licenseNumber,
+        doctor_name: body.doctorName,
+        phone: body.phone,
+        address: body.address,
+        city: body.city,
+        state: body.state,
+        pincode: body.pincode,
+        is_approved: false
+      });
+      return json({ success: res.ok, message: res.ok ? "Profile submitted for review" : "Submission failed" });
+    }
+
+    // ─── DONOR PROFILE REGISTRATION ───
+    if (path === "/donor/profile" && req.method === "POST" && userRole === "donor") {
+      const body = await req.json();
+      const res = await dbUpsert("donors", {
+        id: userId,
+        phone: body.phone,
+        gender: body.gender,
+        weight_kg: Number(body.weightKg),
+        blood_group: body.bloodGroup,
+        date_of_birth: body.dateOfBirth,
+        address: body.address,
+        state: body.state,
+        district: body.district,
+        city: body.city,
+        pincode: body.pincode,
+        medical_history: body.medicalHistory
+      });
+      return json({ success: res.ok, message: res.ok ? "Profile updated" : "Update failed" });
+    }
+
     return json({
       success: false,
       message: "Route not found: " + path,
-      available: ["GET /health", "POST /register", "POST /verify-email", "POST /login"],
     }, 404);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
