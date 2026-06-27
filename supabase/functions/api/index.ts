@@ -330,7 +330,7 @@ Deno.serve(async (req: Request) => {
         const inv = await dbSelect("blood_inventory", "hospital_id=eq." + userId);
         const reqs = await dbSelect("blood_requests", "hospital_id=eq." + userId + "&limit=10");
         const appts = await dbSelect("appointments", "hospital_id=eq." + userId + "&limit=10");
-        const hospProfile = await dbSelect("hospitals", "id=eq." + userId + "&limit=1);");
+        const hospProfile = await dbSelect("hospitals", "id=eq." + userId + "&limit=1");
         return json({
           success: true,
           stats: {
