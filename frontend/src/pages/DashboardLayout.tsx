@@ -55,7 +55,7 @@ export default function DashboardLayout({ children }: LayoutProps) {
               className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-red-500/10 text-red-600 dark:text-red-400 font-bold transition-all"
             >
               {getRoleIcon()}
-              <span className="capitalize">{user?.role} Portal</span>
+              <span className="capitalize">{user?.role === 'bloodbank' ? 'Blood Bank' : user?.role} Portal</span>
             </button>
           </nav>
         </div>

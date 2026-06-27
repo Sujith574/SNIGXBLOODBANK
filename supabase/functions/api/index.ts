@@ -100,8 +100,8 @@ async function register(req: Request): Promise<Response> {
     return json({ success: false, message: "name, email and password are required" }, 400);
   }
 
-  const allowedRoles = ["admin", "donor", "hospital"];
-  const userRole = allowedRoles.includes(role) ? role : "donor";
+  const allowedRoles = ["admin", "bloodbank", "hospital"];
+  const userRole = allowedRoles.includes(role) ? role : "bloodbank";
 
   // Create auth user (email_confirm = false)
   const createRes = await svcFetch("/auth/v1/admin/users", "POST", {
@@ -314,29 +314,25 @@ Deno.serve(async (req: Request) => {
 
     // ─── DASHBOARD STATS ───
     if (req.method === "GET" && path === "/dashboard/stats") {
-      if (userRole === "donor") {
-        const eligible = await dbSelect("donors", "id=eq." + userId + "&select=eligibility_status,last_donation_date,blood_group&limit=1");
-        const activeRequests = await dbSelect("blood_requests", "status=eq.pending&limit=10");
-        const appts = await dbSelect("appointments", "donor_id=eq." + userId + "&select=appointment_date_time,status,hospital_id&limit=5");
-        return json({
-          success: true,
-          stats: {
-            eligibility: eligible.data?.[0] ?? { eligibility_status: "eligible" },
-            requests: activeRequests.data ?? [],
-            appointments: appts.data ?? [],
-          }
-        });
-      } else if (userRole === "hospital") {
+      if (userRole === "bloodbank") {
         const inv = await dbSelect("blood_inventory", "hospital_id=eq." + userId);
-        const reqs = await dbSelect("blood_requests", "hospital_id=eq." + userId + "&limit=10");
-        const appts = await dbSelect("appointments", "hospital_id=eq." + userId + "&limit=10");
-        const hospProfile = await dbSelect("hospitals", "id=eq." + userId + "&limit=1");
+        const activeRequests = await dbSelect("blood_requests", "status=neq.completed&limit=15");
+        const registeredDonors = await dbSelect("donors", "bloodbank_id=eq." + userId + "&limit=10");
         return json({
           success: true,
           stats: {
             inventory: inv.data ?? [],
+            requests: activeRequests.data ?? [],
+            donors: registeredDonors.data ?? [],
+          }
+        });
+      } else if (userRole === "hospital") {
+        const reqs = await dbSelect("blood_requests", "hospital_id=eq." + userId + "&limit=15");
+        const hospProfile = await dbSelect("hospitals", "id=eq." + userId + "&limit=1");
+        return json({
+          success: true,
+          stats: {
             requests: reqs.data ?? [],
-            appointments: appts.data ?? [],
             hospitalInfo: hospProfile.data?.[0] ?? { is_approved: false }
           }
         });
@@ -355,13 +351,13 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ─── BLOOD INVENTORY (HOSPITAL ONLY) ───
+    // ─── BLOOD INVENTORY ───
     if (path === "/blood-inventory") {
       if (req.method === "GET") {
         const inv = await dbSelect("blood_inventory", "hospital_id=eq." + userId);
         return json({ success: true, data: inv.data ?? [] });
       }
-      if (req.method === "POST" && userRole === "hospital") {
+      if (req.method === "POST" && userRole === "bloodbank") {
         const body = await req.json();
         const res = await dbUpsert("blood_inventory", {
           hospital_id: userId,
@@ -370,27 +366,6 @@ Deno.serve(async (req: Request) => {
           updated_at: new Date().toISOString()
         });
         return json({ success: res.ok, message: res.ok ? "Inventory updated" : "Inventory update failed" });
-      }
-    }
-
-    // ─── APPOINTMENTS BOOKING ───
-    if (path === "/appointments") {
-      if (req.method === "GET") {
-        const appts = userRole === "donor" 
-          ? await dbSelect("appointments", "donor_id=eq." + userId) 
-          : await dbSelect("appointments", "hospital_id=eq." + userId);
-        return json({ success: true, data: appts.data ?? [] });
-      }
-      if (req.method === "POST" && userRole === "donor") {
-        const body = await req.json();
-        const res = await dbUpsert("appointments", {
-          donor_id: userId,
-          hospital_id: body.hospitalId,
-          appointment_date_time: body.dateTime,
-          status: "scheduled",
-          note: body.note
-        });
-        return json({ success: res.ok, message: res.ok ? "Appointment booked" : "Booking failed" });
       }
     }
 
@@ -419,11 +394,70 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ─── HOSPITAL VERIFICATION (ADMIN ONLY) ───
-    if (path === "/admin/approve-hospital" && req.method === "POST" && userRole === "admin") {
+    // ─── GIVE / PROVIDE BLOOD UNITS ───
+    if (path === "/blood-requests/fulfill" && req.method === "POST" && userRole === "bloodbank") {
       const body = await req.json();
-      const res = await dbPatch("hospitals", "id=eq." + body.hospitalId, { is_approved: true });
-      return json({ success: res.ok, message: res.ok ? "Hospital approved successfully" : "Approval failed" });
+      const { requestId, unitsProvided, bloodGroup } = body;
+
+      // 1. Record fulfillment
+      const fulfillmentRes = await dbUpsert("fulfillments", {
+        request_id: requestId,
+        bloodbank_id: userId,
+        units_provided: Number(unitsProvided)
+      });
+
+      if (!fulfillmentRes.ok) return json({ success: false, message: "Failed to record fulfillment transaction" }, 500);
+
+      // 2. Fetch original request details
+      const reqDetails = await dbSelect("blood_requests", "id=eq." + requestId + "&limit=1");
+      if (reqDetails.ok && Array.isArray(reqDetails.data) && reqDetails.data.length > 0) {
+        const request = reqDetails.data[0];
+        const remainingRequired = Math.max(0, request.units_required - Number(unitsProvided));
+        
+        // Update request status if completely fulfilled
+        await dbPatch("blood_requests", "id=eq." + requestId, {
+          units_required: remainingRequired,
+          status: remainingRequired === 0 ? "completed" : "pending"
+        });
+      }
+
+      // 3. Deduct units from inventory if exists
+      const stockDetails = await dbSelect("blood_inventory", "hospital_id=eq." + userId + "&blood_group=eq." + bloodGroup + "&limit=1");
+      if (stockDetails.ok && Array.isArray(stockDetails.data) && stockDetails.data.length > 0) {
+        const currentUnits = stockDetails.data[0].units_available;
+        await dbPatch("blood_inventory", "id=eq." + stockDetails.data[0].id, {
+          units_available: Math.max(0, currentUnits - Number(unitsProvided)),
+          updated_at: new Date().toISOString()
+        });
+      }
+
+      return json({ success: true, message: "Units successfully provided to the hospital" });
+    }
+
+    // ─── REGISTER BLOOD DONOR RECORDS ───
+    if (path === "/donors/create" && req.method === "POST" && userRole === "bloodbank") {
+      const body = await req.json();
+      const res = await dbUpsert("donors", {
+        bloodbank_id: userId,
+        phone: body.phone,
+        gender: body.gender,
+        weight_kg: Number(body.weightKg),
+        blood_group: body.bloodGroup,
+        date_of_birth: body.dateOfBirth,
+        address: body.address,
+        state: body.state,
+        district: body.district,
+        city: body.city,
+        pincode: body.pincode,
+        medical_history: body.medicalHistory
+      });
+      return json({ success: res.ok, message: res.ok ? "Donor record successfully added" : "Failed to record donor details" });
+    }
+
+    // ─── GET REGISTERED DONOR LIST ───
+    if (path === "/donors" && req.method === "GET" && userRole === "bloodbank") {
+      const res = await dbSelect("donors", "bloodbank_id=eq." + userId);
+      return json({ success: true, data: res.data ?? [] });
     }
 
     // ─── HOSPITAL PROFILE REGISTRATION ───
@@ -444,24 +478,11 @@ Deno.serve(async (req: Request) => {
       return json({ success: res.ok, message: res.ok ? "Profile submitted for review" : "Submission failed" });
     }
 
-    // ─── DONOR PROFILE REGISTRATION ───
-    if (path === "/donor/profile" && req.method === "POST" && userRole === "donor") {
+    // ─── HOSPITAL VERIFICATION (ADMIN ONLY) ───
+    if (path === "/admin/approve-hospital" && req.method === "POST" && userRole === "admin") {
       const body = await req.json();
-      const res = await dbUpsert("donors", {
-        id: userId,
-        phone: body.phone,
-        gender: body.gender,
-        weight_kg: Number(body.weightKg),
-        blood_group: body.bloodGroup,
-        date_of_birth: body.dateOfBirth,
-        address: body.address,
-        state: body.state,
-        district: body.district,
-        city: body.city,
-        pincode: body.pincode,
-        medical_history: body.medicalHistory
-      });
-      return json({ success: res.ok, message: res.ok ? "Profile updated" : "Update failed" });
+      const res = await dbPatch("hospitals", "id=eq." + body.hospitalId, { is_approved: true });
+      return json({ success: res.ok, message: res.ok ? "Hospital approved successfully" : "Approval failed" });
     }
 
     return json({

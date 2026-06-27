@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 
-export type Role = 'admin' | 'donor' | 'hospital';
+export type Role = 'admin' | 'bloodbank' | 'hospital';
 export type AuthUser = {
   id: string;
   role: Role;

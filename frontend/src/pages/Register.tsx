@@ -192,18 +192,18 @@ export default function Register() {
                 I want to register as a
               </label>
               <div className="grid grid-cols-3 gap-3">
-                {/* Donor option */}
+                {/* Blood Bank option */}
                 <button
                   type="button"
-                  onClick={() => setRole('donor')}
+                  onClick={() => setRole('bloodbank' as any)}
                   className={`flex flex-col items-center justify-center p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer ${
-                    role === 'donor'
+                    role === ('bloodbank' as any)
                       ? 'border-red-500 bg-red-500/10 text-red-600 dark:text-red-400 shadow-md ring-2 ring-red-500/20'
                       : 'border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
                 >
                   <FiHeart className="w-6 h-6 mb-2" />
-                  <span className="text-xs font-bold">Donor</span>
+                  <span className="text-xs font-bold text-center">Blood Bank</span>
                 </button>
 
                 {/* Hospital option */}
@@ -217,7 +217,7 @@ export default function Register() {
                   }`}
                 >
                   <FiActivity className="w-6 h-6 mb-2" />
-                  <span className="text-xs font-bold">Hospital</span>
+                  <span className="text-xs font-bold text-center">Hospital</span>
                 </button>
 
                 {/* Admin option */}
@@ -231,7 +231,7 @@ export default function Register() {
                   }`}
                 >
                   <FiShield className="w-6 h-6 mb-2" />
-                  <span className="text-xs font-bold">Admin</span>
+                  <span className="text-xs font-bold text-center">Admin</span>
                 </button>
               </div>
             </div>

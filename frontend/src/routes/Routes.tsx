@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import Login from '../pages/Login';
 import Register from '../pages/Register';
 import VerifyEmail from '../pages/VerifyEmail';
-import DonorDashboard from '../pages/DonorDashboard';
+import BloodbankDashboard from '../pages/BloodbankDashboard';
 import HospitalDashboard from '../pages/HospitalDashboard';
 import AdminDashboard from '../pages/AdminDashboard';
 
@@ -25,7 +25,7 @@ function AuthenticatedDashboard() {
 
   if (user.role === 'admin') return <AdminDashboard />;
   if (user.role === 'hospital') return <HospitalDashboard />;
-  return <DonorDashboard />;
+  return <BloodbankDashboard />;
 }
 
 export default function Routes() {
