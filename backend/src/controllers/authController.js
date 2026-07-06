@@ -71,7 +71,7 @@ const register = asyncHandler(async (req, res) => {
     name: name || undefined,
     email: email.toLowerCase().trim(),
     passwordHash,
-    role: role && ['admin', 'donor', 'hospital'].includes(role) ? role : 'donor',
+    role: role && ['admin', 'bloodbank', 'hospital'].includes(role) ? role : 'bloodbank',
     isEmailVerified: shouldAutoVerify ? true : false,
   });
 

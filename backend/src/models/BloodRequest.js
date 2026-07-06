@@ -7,24 +7,15 @@ const BloodRequestSchema = new mongoose.Schema(
     gender: { type: String, enum: ['male', 'female', 'other'] },
     bloodGroup: { type: String, enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'], required: true },
     unitsRequired: { type: Number, required: true },
-    hospital: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital', required: true },
-    doctor: { type: String },
+    // hospitalId references the User._id of the hospital account
+    hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    doctorName: { type: String, trim: true },
     emergencyLevel: { type: String, enum: ['low', 'medium', 'high'], default: 'low' },
     reason: { type: String },
     requiredDate: { type: Date },
-    status: { type: String, enum: ['pending', 'under_review', 'approved', 'rejected', 'completed'], default: 'pending', index: true },
-    workflowHistory: [
-      {
-        status: { type: String },
-        byRole: { type: String },
-        byUser: { type: mongoose.Schema.Types.ObjectId },
-        note: { type: String },
-        changedAt: { type: Date, default: Date.now },
-      },
-    ],
+    status: { type: String, enum: ['pending', 'completed'], default: 'pending', index: true },
   },
   { timestamps: true }
 );
 
 module.exports = mongoose.model('BloodRequest', BloodRequestSchema);
-

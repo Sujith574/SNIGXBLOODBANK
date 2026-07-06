@@ -18,10 +18,10 @@ async function seedUsers() {
         isEmailVerified: true
       },
       {
-        name: 'Test Donor',
-        email: 'donor@bloodbank.com',
+        name: 'Test Blood Bank',
+        email: 'bloodbank@bloodbank.com',
         passwordHash: defaultPasswordHash,
-        role: 'donor',
+        role: 'bloodbank',
         isEmailVerified: true
       },
       {
