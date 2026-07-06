@@ -189,8 +189,8 @@ export default function Register() {
     setResending(true);
     setError(null);
     try {
-      // Re-trigger OTP by calling register with same data
-      const res = await api.post('/auth/register', { name, email, password, role });
+      // Correctly call the resend-otp endpoint
+      const res = await api.post('/auth/resend-otp', { email });
       if (res.data?.success) {
         setOtp('');
         startResendCooldown();

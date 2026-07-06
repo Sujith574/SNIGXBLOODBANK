@@ -234,10 +234,35 @@ async function verifyOtp(req: Request): Promise<Response> {
     });
   }
 
-  return json({
-    success: true,
-    message: "Email verified successfully! You can now log in.",
+}
+
+// ──────────────────────────────────────────────────────────
+// RESEND OTP
+// ──────────────────────────────────────────────────────────
+async function resendOtp(req: Request): Promise<Response> {
+  const { email } = await req.json();
+  if (!email) return json({ success: false, message: "email is required" }, 400);
+
+  const otpRes = await fetch(SUPABASE_URL + "/auth/v1/otp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": ANON_KEY,
+    },
+    body: JSON.stringify({
+      email,
+      create_user: false,
+    }),
   });
+
+  const otpData = await otpRes.json() as Record<string, unknown>;
+
+  if (!otpRes.ok) {
+    const msg = String(otpData.msg ?? otpData.message ?? otpData.error_description ?? "Failed to resend OTP");
+    return json({ success: false, message: msg }, 500);
+  }
+
+  return json({ success: true, message: "Verification OTP resent successfully." });
 }
 
 // ──────────────────────────────────────────────────────────
@@ -359,6 +384,7 @@ Deno.serve(async (req: Request) => {
     if (req.method === "GET" && path === "/health") return health();
     if (req.method === "POST" && path === "/register") return await register(req);
     if (req.method === "POST" && path === "/verify-otp") return await verifyOtp(req);
+    if (req.method === "POST" && path === "/resend-otp") return await resendOtp(req);
     if (req.method === "POST" && path === "/verify-email") return await verifyEmail(req);
     if (req.method === "POST" && path === "/login") return await login(req);
 
