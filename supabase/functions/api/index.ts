@@ -11,7 +11,7 @@ const FROM_EMAIL = Deno.env.get("FROM_EMAIL") ?? "no-reply@example.com";
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
 };
 
 function json(data: unknown, status = 200): Response {
@@ -359,12 +359,23 @@ Deno.serve(async (req: Request) => {
       }
       if (req.method === "POST" && userRole === "bloodbank") {
         const body = await req.json();
-        const res = await dbUpsert("blood_inventory", {
-          hospital_id: userId,
-          blood_group: body.bloodGroup,
-          units_available: body.units,
-          updated_at: new Date().toISOString()
-        });
+        // Use PATCH if record exists, otherwise INSERT
+        const existingRes = await dbSelect("blood_inventory", "hospital_id=eq." + userId + "&blood_group=eq." + encodeURIComponent(body.bloodGroup) + "&limit=1");
+        const existing = Array.isArray(existingRes.data) && existingRes.data.length > 0 ? existingRes.data[0] as { id: string } : null;
+        let res;
+        if (existing) {
+          res = await dbPatch("blood_inventory", "id=eq." + existing.id, {
+            units_available: Number(body.units),
+            updated_at: new Date().toISOString()
+          });
+        } else {
+          res = await dbUpsert("blood_inventory", {
+            hospital_id: userId,
+            blood_group: body.bloodGroup,
+            units_available: Number(body.units),
+            updated_at: new Date().toISOString()
+          });
+        }
         return json({ success: res.ok, message: res.ok ? "Inventory updated" : "Inventory update failed" });
       }
     }
@@ -537,6 +548,32 @@ Deno.serve(async (req: Request) => {
           });
       }
       return json({ success: true, data: results });
+    }
+
+    // ─── GET CURRENT USER PROFILE ───
+    if (path === "/profile" && req.method === "GET") {
+      const pRes = await dbSelect("profiles", "id=eq." + userId + "&select=id,name,email,role,city,state,is_email_verified,created_at&limit=1");
+      const p = Array.isArray(pRes.data) && pRes.data.length > 0 ? pRes.data[0] : null;
+      if (!p) return json({ success: false, message: "Profile not found" }, 404);
+      return json({ success: true, data: p });
+    }
+
+    // ─── UPDATE CURRENT USER PROFILE ───
+    if (path === "/profile" && req.method === "PATCH") {
+      const body = await req.json();
+      const allowed: Record<string, unknown> = {};
+      if (body.name !== undefined) allowed.name = body.name;
+      if (body.city !== undefined) allowed.city = body.city;
+      if (body.state !== undefined) allowed.state = body.state;
+      const pRes = await dbPatch("profiles", "id=eq." + userId, allowed);
+      return json({ success: pRes.ok, message: pRes.ok ? "Profile updated" : "Update failed" });
+    }
+
+    // ─── GET HOSPITAL'S OWN PROFILE ───
+    if (path === "/hospital/profile" && req.method === "GET" && userRole === "hospital") {
+      const hospRes = await dbSelect("hospitals", "id=eq." + userId + "&limit=1");
+      const hosp = Array.isArray(hospRes.data) && hospRes.data.length > 0 ? hospRes.data[0] : null;
+      return json({ success: true, data: hosp });
     }
 
     // ─── HOSPITAL'S OWN BLOOD REQUESTS ───

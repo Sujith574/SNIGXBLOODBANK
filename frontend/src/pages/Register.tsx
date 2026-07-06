@@ -8,7 +8,6 @@ import {
   FiLock, 
   FiEye, 
   FiEyeOff, 
-  FiShield, 
   FiHeart, 
   FiActivity,
   FiArrowRight,
@@ -23,7 +22,7 @@ export default function Register() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<Role>('bloodbank');
+  const [role, setRole] = useState<'bloodbank' | 'hospital'>('bloodbank');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -189,15 +188,15 @@ export default function Register() {
             {/* Role Card Selection */}
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-                I want to register as a
+                I am registering as a
               </label>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 {/* Blood Bank option */}
                 <button
                   type="button"
-                  onClick={() => setRole('bloodbank' as any)}
+                  onClick={() => setRole('bloodbank')}
                   className={`flex flex-col items-center justify-center p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer ${
-                    role === ('bloodbank' as any)
+                    role === 'bloodbank'
                       ? 'border-red-500 bg-red-500/10 text-red-600 dark:text-red-400 shadow-md ring-2 ring-red-500/20'
                       : 'border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'
                   }`}
@@ -218,20 +217,6 @@ export default function Register() {
                 >
                   <FiActivity className="w-6 h-6 mb-2" />
                   <span className="text-xs font-bold text-center">Hospital</span>
-                </button>
-
-                {/* Admin option */}
-                <button
-                  type="button"
-                  onClick={() => setRole('admin')}
-                  className={`flex flex-col items-center justify-center p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer ${
-                    role === 'admin'
-                      ? 'border-red-500 bg-red-500/10 text-red-600 dark:text-red-400 shadow-md ring-2 ring-red-500/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/40 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'
-                  }`}
-                >
-                  <FiShield className="w-6 h-6 mb-2" />
-                  <span className="text-xs font-bold text-center">Admin</span>
                 </button>
               </div>
             </div>

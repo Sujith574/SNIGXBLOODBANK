@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const usr = res.data?.data?.user;
 
         if (!accessToken || !usr) {
-          throw new Error('Login succeeded but token/user missing from response');
+          throw new Error(res.data?.message || 'Login succeeded but token/user missing from response');
         }
 
         localStorage.setItem('accessToken', accessToken);

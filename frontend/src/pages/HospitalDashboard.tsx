@@ -100,7 +100,7 @@ export default function HospitalDashboard() {
   }
 
   const requests: RequestItem[] = stats?.requests || [];
-  const isApproved = stats?.hospitalInfo?.is_approved ?? true; // fallback to true if profile not linked yet
+  const isApproved = stats?.hospitalInfo?.is_approved ?? false;
 
   return (
     <DashboardLayout>
@@ -117,11 +117,15 @@ export default function HospitalDashboard() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3 px-5 py-3.5 rounded-2xl border border-green-500/25 bg-green-500/10 text-green-600 dark:text-green-400">
+          <div className={`flex items-center gap-3 px-5 py-3.5 rounded-2xl border ${
+            isApproved 
+              ? 'border-green-500/25 bg-green-500/10 text-green-600 dark:text-green-400'
+              : 'border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+          }`}>
             <FiCheckSquare className="text-xl" />
             <div>
               <div className="text-xs uppercase font-bold tracking-wider opacity-85">Licensing Approval</div>
-              <div className="font-extrabold text-sm capitalize">Verified</div>
+              <div className="font-extrabold text-sm capitalize">{isApproved ? 'Verified' : 'Pending Review'}</div>
             </div>
           </div>
         </div>

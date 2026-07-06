@@ -36,7 +36,7 @@ export default function Login() {
     try {
       setLoading(true);
       await login({ email, password, remember });
-      navigate('/');
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Login failed');
     } finally {
@@ -150,13 +150,11 @@ export default function Login() {
                 <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
                   Password
                 </label>
-                <button
-                  type="button"
-                  className="text-xs text-red-600 dark:text-red-400 hover:underline cursor-pointer focus:outline-none"
-                  onClick={() => navigate('/forgot-password')}
+                <span
+                  className="text-xs text-slate-400 dark:text-slate-500 cursor-default select-none"
                 >
-                  Forgot password?
-                </button>
+                  Need help? Contact support.
+                </span>
               </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 dark:text-slate-500">
