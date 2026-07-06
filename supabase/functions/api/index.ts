@@ -92,8 +92,6 @@ async function dbPatch(table: string, filter: string, patch: unknown) {
 }
 
 // ──────────────────────────────────────────────────────────
-// REGISTER  (Step 1: create user + send OTP via Supabase)
-// ──────────────────────────────────────────────────────────
 async function register(req: Request): Promise<Response> {
   const { name, email, password, role } = await req.json();
   if (!name || !email || !password) {
@@ -103,28 +101,35 @@ async function register(req: Request): Promise<Response> {
   const allowedRoles = ["bloodbank", "hospital"];
   const userRole = allowedRoles.includes(role) ? role : "bloodbank";
 
-  // Step 1: Create the auth user (not email-confirmed yet)
-  const createRes = await svcFetch("/auth/v1/admin/users", "POST", {
-    email,
-    password,
-    email_confirm: false,
-    user_metadata: { name, role: userRole },
+  // Step 1: Sign up the user via Supabase Auth client endpoint (triggers native OTP/Confirmation email)
+  const signupRes = await fetch(SUPABASE_URL + "/auth/v1/signup", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": ANON_KEY,
+    },
+    body: JSON.stringify({
+      email,
+      password,
+      options: {
+        data: { name, role: userRole }
+      }
+    })
   });
 
-  if (!createRes.ok) {
-    const e = createRes.data as Record<string, unknown>;
-    const msg = String(e.msg ?? e.message ?? "Registration failed");
-    // If user already exists, still send OTP so they can verify
+  const signupData = await signupRes.json() as Record<string, unknown>;
+
+  if (!signupRes.ok) {
+    const msg = String(signupData.msg ?? signupData.message ?? signupData.error_description ?? "Registration failed");
     if (!msg.toLowerCase().includes("already")) {
       return json({ success: false, message: msg }, 400);
     }
   }
 
-  // Step 2: Create/update profile row
-  let userId = "";
-  if (createRes.ok) {
-    const authUser = createRes.data as Record<string, unknown>;
-    userId = authUser.id as string;
+  const userId = signupData.user ? (signupData.user as Record<string, string>).id : null;
+
+  // Step 2: Create/update profile row if user was created
+  if (userId) {
     await dbUpsert("profiles", {
       id: userId,
       name,
@@ -134,7 +139,7 @@ async function register(req: Request): Promise<Response> {
     });
   }
 
-  // Step 3: Send Supabase native OTP email (6-digit code)
+  // Step 3: Trigger Supabase native OTP email sending for confirmation
   const otpRes = await fetch(SUPABASE_URL + "/auth/v1/otp", {
     method: "POST",
     headers: {
@@ -143,7 +148,7 @@ async function register(req: Request): Promise<Response> {
     },
     body: JSON.stringify({
       email,
-      create_user: false,   // user already created above
+      create_user: false,
     }),
   });
 
