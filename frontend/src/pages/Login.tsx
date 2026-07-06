@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -15,6 +15,7 @@ import {
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
 
   const [email, setEmail] = useState('');
@@ -23,6 +24,9 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Show success banner when redirected from OTP verification
+  const justVerified = (location.state as any)?.verified === true;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -194,6 +198,16 @@ export default function Login() {
 
             {/* Notifications & Error messages */}
             <AnimatePresence mode="wait">
+              {justVerified && !error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-4 py-3 text-sm flex items-center gap-2"
+                >
+                  <FiCheck className="flex-shrink-0 w-5 h-5 font-bold" />
+                  <span>Email verified! You can now sign in.</span>
+                </motion.div>
+              )}
               {error && (
                 <motion.div
                   initial={{ opacity: 0, y: -5 }}

@@ -92,7 +92,7 @@ async function dbPatch(table: string, filter: string, patch: unknown) {
 }
 
 // ──────────────────────────────────────────────────────────
-// REGISTER
+// REGISTER  (Step 1: create user + send OTP via Supabase)
 // ──────────────────────────────────────────────────────────
 async function register(req: Request): Promise<Response> {
   const { name, email, password, role } = await req.json();
@@ -100,10 +100,10 @@ async function register(req: Request): Promise<Response> {
     return json({ success: false, message: "name, email and password are required" }, 400);
   }
 
-  const allowedRoles = ["admin", "bloodbank", "hospital"];
+  const allowedRoles = ["bloodbank", "hospital"];
   const userRole = allowedRoles.includes(role) ? role : "bloodbank";
 
-  // Create auth user (email_confirm = false)
+  // Step 1: Create the auth user (not email-confirmed yet)
   const createRes = await svcFetch("/auth/v1/admin/users", "POST", {
     email,
     password,
@@ -113,58 +113,126 @@ async function register(req: Request): Promise<Response> {
 
   if (!createRes.ok) {
     const e = createRes.data as Record<string, unknown>;
-    return json({ success: false, message: String(e.msg ?? e.message ?? "Registration failed") }, 400);
+    const msg = String(e.msg ?? e.message ?? "Registration failed");
+    // If user already exists, still send OTP so they can verify
+    if (!msg.toLowerCase().includes("already")) {
+      return json({ success: false, message: msg }, 400);
+    }
   }
 
-  const authUser = createRes.data as Record<string, unknown>;
-  const userId = authUser.id as string;
+  // Step 2: Create/update profile row
+  let userId = "";
+  if (createRes.ok) {
+    const authUser = createRes.data as Record<string, unknown>;
+    userId = authUser.id as string;
+    await dbUpsert("profiles", {
+      id: userId,
+      name,
+      email,
+      role: userRole,
+      is_email_verified: false,
+    });
+  }
 
-  // Generate verification token
-  const rawToken = randomHex();
-  const tokenHash = await sha256hex(rawToken);
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-
-  const profileRes = await dbUpsert("profiles", {
-    id: userId,
-    name,
-    email,
-    role: userRole,
-    is_email_verified: false,
-    email_verification_token: tokenHash,
-    email_verification_expires_at: expiresAt,
+  // Step 3: Send Supabase native OTP email (6-digit code)
+  const otpRes = await fetch(SUPABASE_URL + "/auth/v1/otp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": ANON_KEY,
+    },
+    body: JSON.stringify({
+      email,
+      create_user: false,   // user already created above
+    }),
   });
 
-  if (!profileRes.ok) {
-    const e = profileRes.data as Record<string, unknown>;
-    return json({ success: false, message: String(e.message ?? "Profile creation failed") }, 400);
+  if (!otpRes.ok) {
+    const otpData = await otpRes.json() as Record<string, unknown>;
+    const msg = String(otpData.msg ?? otpData.message ?? otpData.error_description ?? "Failed to send OTP email");
+    return json({ success: false, message: msg }, 500);
   }
 
-  const verifyLink = APP_BASE_URL + "/verify-email?token=" + rawToken;
+  return json({
+    success: true,
+    message: "Account created! Please enter the 6-digit OTP sent to your email address.",
+    requireOtp: true,
+  }, 201);
+}
 
-  if (SENDGRID_API_KEY) {
-    await fetch("https://api.sendgrid.com/v3/mail/send", {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + SENDGRID_API_KEY,
-        "Content-Type": "application/json",
+// ──────────────────────────────────────────────────────────
+// VERIFY OTP  (Step 2: verify the 6-digit OTP)
+// ──────────────────────────────────────────────────────────
+async function verifyOtp(req: Request): Promise<Response> {
+  const { email, token } = await req.json();
+  if (!email || !token) {
+    return json({ success: false, message: "email and OTP token are required" }, 400);
+  }
+
+  // Verify OTP with Supabase (type=email for OTP sent via /otp endpoint)
+  const verifyRes = await fetch(SUPABASE_URL + "/auth/v1/verify", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": ANON_KEY,
+    },
+    body: JSON.stringify({
+      email,
+      token,
+      type: "email",
+    }),
+  });
+
+  const verifyData = await verifyRes.json() as Record<string, unknown>;
+
+  if (!verifyRes.ok) {
+    const msg = String(
+      verifyData.error_description ?? verifyData.msg ?? verifyData.message ?? verifyData.error ?? "Invalid or expired OTP"
+    );
+    return json({ success: false, message: msg }, 400);
+  }
+
+  // OTP verified — extract user ID from response
+  const verifiedUser = verifyData.user as Record<string, unknown> | undefined;
+  const userId = verifiedUser?.id as string | undefined;
+
+  if (userId) {
+    // Mark profile as email verified
+    await dbPatch("profiles", "id=eq." + userId, {
+      is_email_verified: true,
+    });
+  }
+
+  // Return access token so user is auto-logged in right after verification
+  const accessToken = verifyData.access_token as string | undefined;
+  const refreshToken = verifyData.refresh_token as string | undefined;
+
+  if (userId && accessToken) {
+    const pRes = await dbSelect("profiles", "id=eq." + userId + "&select=name,role&limit=1");
+    const profile = Array.isArray(pRes.data) && pRes.data.length > 0
+      ? pRes.data[0] as Record<string, unknown>
+      : null;
+
+    return json({
+      success: true,
+      message: "Email verified successfully! You are now logged in.",
+      data: {
+        accessToken,
+        refreshToken,
+        user: {
+          id: userId,
+          email,
+          name: profile?.name ?? "",
+          role: profile?.role ?? "",
+        },
       },
-      body: JSON.stringify({
-        personalizations: [{ to: [{ email }] }],
-        from: { email: FROM_EMAIL },
-        subject: "Verify your email - Snigx Blood Bank",
-        content: [
-          { type: "text/plain", value: "Verify your account: " + verifyLink },
-          { type: "text/html", value: "<p>Click to verify your email:</p><a href='" + verifyLink + "'>Verify Email</a>" },
-        ],
-      }),
     });
   }
 
   return json({
     success: true,
-    message: "Registered! Please verify your email.",
-    verifyLink: SENDGRID_API_KEY ? undefined : verifyLink,
-  }, 201);
+    message: "Email verified successfully! You can now log in.",
+  });
 }
 
 // ──────────────────────────────────────────────────────────
@@ -285,6 +353,7 @@ Deno.serve(async (req: Request) => {
   try {
     if (req.method === "GET" && path === "/health") return health();
     if (req.method === "POST" && path === "/register") return await register(req);
+    if (req.method === "POST" && path === "/verify-otp") return await verifyOtp(req);
     if (req.method === "POST" && path === "/verify-email") return await verifyEmail(req);
     if (req.method === "POST" && path === "/login") return await login(req);
 
