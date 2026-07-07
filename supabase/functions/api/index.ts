@@ -179,7 +179,7 @@ async function login(req: Request): Promise<Response> {
     let adminUserId: string | null = null;
 
     // Try to find admin by email in profiles first
-    const adminProfileRes = await dbSelect("profiles", "email=eq." + encodeURIComponent(ADMIN_EMAIL) + "&role=eq.admin&limit=1");
+    const adminProfileRes = await dbSelect("profiles", "email=eq." + ADMIN_EMAIL + "&role=eq.admin&limit=1");
     if (Array.isArray(adminProfileRes.data) && adminProfileRes.data.length > 0) {
       adminUserId = (adminProfileRes.data[0] as Record<string, string>).id;
     }
@@ -359,7 +359,7 @@ Deno.serve(async (req: Request) => {
       if (userRole === "bloodbank") {
         const inv = await dbSelect("blood_inventory", "hospital_id=eq." + userId);
         const activeRequests = await dbSelect("blood_requests", "status=neq.completed&limit=15");
-        const registeredDonors = await dbSelect("donors", "bloodbank_id=eq." + userId + "&limit=10");
+        const registeredDonors = await dbSelect("donor_records", "bloodbank_id=eq." + userId + "&limit=10");
         return json({
           success: true,
           stats: {
@@ -379,7 +379,7 @@ Deno.serve(async (req: Request) => {
           }
         });
       } else if (userRole === "donor") {
-        const donorProfile = await dbSelect("donors", "user_id=eq." + userId + "&limit=1");
+        const donorProfile = await dbSelect("donors", "id=eq." + userId + "&limit=1");
         return json({
           success: true,
           stats: {
@@ -492,11 +492,12 @@ Deno.serve(async (req: Request) => {
       return json({ success: true, message: "Units successfully provided to the hospital" });
     }
 
-    // ─── REGISTER BLOOD DONOR RECORDS ───
+    // ─── REGISTER BLOOD DONOR RECORDS (walk-in donors registered by blood bank) ───
     if (path === "/donors/create" && req.method === "POST" && userRole === "bloodbank") {
       const body = await req.json();
-      const res = await dbUpsert("donors", {
+      const res = await dbUpsert("donor_records", {
         bloodbank_id: userId,
+        name: body.name,
         phone: body.phone,
         gender: body.gender,
         weight_kg: Number(body.weightKg),
@@ -514,7 +515,7 @@ Deno.serve(async (req: Request) => {
 
     // ─── GET REGISTERED DONOR LIST ───
     if (path === "/donors" && req.method === "GET" && userRole === "bloodbank") {
-      const res = await dbSelect("donors", "bloodbank_id=eq." + userId);
+      const res = await dbSelect("donor_records", "bloodbank_id=eq." + userId);
       return json({ success: true, data: res.data ?? [] });
     }
 
