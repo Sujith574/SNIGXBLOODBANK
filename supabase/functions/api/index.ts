@@ -6,8 +6,8 @@ const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
 // ── Hardcoded admin credentials ──────────────────────────────
-const ADMIN_EMAIL = "snigxbloodbank.in";
-const ADMIN_PASSWORD = "snigx0207";
+const ADMIN_EMAIL = "snigx@bloodbank.in";
+const ADMIN_PASSWORD = "Snigx0207";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
