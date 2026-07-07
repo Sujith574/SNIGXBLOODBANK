@@ -73,9 +73,18 @@ export default function AdminDashboard() {
         api.get('/admin/hospitals'),
       ]);
       if (statsRes.status === 'fulfilled') setStats(statsRes.value.data?.data || null);
-      if (pendingRes.status === 'fulfilled') setPendingUsers(pendingRes.value.data?.data || []);
-      if (bbRes.status === 'fulfilled') setBloodbanks(bbRes.value.data?.data || []);
-      if (hospRes.status === 'fulfilled') setHospitals(hospRes.value.data?.data || []);
+      if (pendingRes.status === 'fulfilled') {
+        const d = pendingRes.value.data?.data;
+        setPendingUsers(Array.isArray(d) ? d : []);
+      }
+      if (bbRes.status === 'fulfilled') {
+        const d = bbRes.value.data?.data;
+        setBloodbanks(Array.isArray(d) ? d : []);
+      }
+      if (hospRes.status === 'fulfilled') {
+        const d = hospRes.value.data?.data;
+        setHospitals(Array.isArray(d) ? d : []);
+      }
     } catch (err) {
       console.error(err);
     } finally {
