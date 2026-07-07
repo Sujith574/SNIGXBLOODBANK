@@ -139,13 +139,12 @@ async function register(req: Request): Promise<Response> {
     });
   }
 
-  // Step 3: Trigger OTP email via service-role (ANON_KEY not needed)
+  // Step 3: Trigger OTP email via the public OTP endpoint (requires ANON_KEY, not service role)
   const otpRes = await fetch(SUPABASE_URL + "/auth/v1/otp", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": "Bearer " + SVC_KEY,
-      "apikey": SVC_KEY,
+      "apikey": ANON_KEY,
     },
     body: JSON.stringify({
       email,
@@ -175,13 +174,12 @@ async function verifyOtp(req: Request): Promise<Response> {
     return json({ success: false, message: "email and OTP token are required" }, 400);
   }
 
-  // Verify OTP with Supabase (service role so no ANON_KEY dependency)
+  // Verify OTP with Supabase public verify endpoint (requires ANON_KEY)
   const verifyRes = await fetch(SUPABASE_URL + "/auth/v1/verify", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": "Bearer " + SVC_KEY,
-      "apikey": SVC_KEY,
+      "apikey": ANON_KEY,
     },
     body: JSON.stringify({
       email,
@@ -254,8 +252,7 @@ async function resendOtp(req: Request): Promise<Response> {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": "Bearer " + SVC_KEY,
-      "apikey": SVC_KEY,
+      "apikey": ANON_KEY,
     },
     body: JSON.stringify({
       email,
