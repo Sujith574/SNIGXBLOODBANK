@@ -98,22 +98,22 @@ async function register(req: Request): Promise<Response> {
     return json({ success: false, message: "name, email and password are required" }, 400);
   }
 
-  const allowedRoles = ["bloodbank", "hospital"];
+  const allowedRoles = ["bloodbank", "hospital", "donor"];
   const userRole = allowedRoles.includes(role) ? role : "bloodbank";
 
-  // Step 1: Sign up the user via Supabase Auth client endpoint (triggers native OTP/Confirmation email)
-  const signupRes = await fetch(SUPABASE_URL + "/auth/v1/signup", {
+  // Step 1: Sign up the user via Supabase Auth admin endpoint (service role — no ANON_KEY needed)
+  const signupRes = await fetch(SUPABASE_URL + "/auth/v1/admin/users", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "apikey": ANON_KEY,
+      "Authorization": "Bearer " + SVC_KEY,
+      "apikey": SVC_KEY,
     },
     body: JSON.stringify({
       email,
       password,
-      options: {
-        data: { name, role: userRole }
-      }
+      email_confirm: false,
+      user_metadata: { name, role: userRole },
     })
   });
 
@@ -139,12 +139,13 @@ async function register(req: Request): Promise<Response> {
     });
   }
 
-  // Step 3: Trigger Supabase native OTP email sending for confirmation
+  // Step 3: Trigger OTP email via service-role (ANON_KEY not needed)
   const otpRes = await fetch(SUPABASE_URL + "/auth/v1/otp", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "apikey": ANON_KEY,
+      "Authorization": "Bearer " + SVC_KEY,
+      "apikey": SVC_KEY,
     },
     body: JSON.stringify({
       email,
@@ -174,12 +175,13 @@ async function verifyOtp(req: Request): Promise<Response> {
     return json({ success: false, message: "email and OTP token are required" }, 400);
   }
 
-  // Verify OTP with Supabase (type=email for OTP sent via /otp endpoint)
+  // Verify OTP with Supabase (service role so no ANON_KEY dependency)
   const verifyRes = await fetch(SUPABASE_URL + "/auth/v1/verify", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "apikey": ANON_KEY,
+      "Authorization": "Bearer " + SVC_KEY,
+      "apikey": SVC_KEY,
     },
     body: JSON.stringify({
       email,
@@ -234,6 +236,11 @@ async function verifyOtp(req: Request): Promise<Response> {
     });
   }
 
+  // Verification succeeded but no session returned — ask user to log in
+  return json({
+    success: true,
+    message: "Email verified successfully! Please log in to continue.",
+  });
 }
 
 // ──────────────────────────────────────────────────────────
@@ -247,7 +254,8 @@ async function resendOtp(req: Request): Promise<Response> {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "apikey": ANON_KEY,
+      "Authorization": "Bearer " + SVC_KEY,
+      "apikey": SVC_KEY,
     },
     body: JSON.stringify({
       email,
