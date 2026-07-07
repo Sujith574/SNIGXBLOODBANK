@@ -3,6 +3,8 @@ const crypto = require('crypto');
 const { sendMail } = require('../config/email');
 const asyncHandler = require('../config/asyncHandler');
 const User = require('../models/User');
+const Donor = require('../models/Donor');
+const Hospital = require('../models/Hospital');
 const { signAccessToken } = require('../services/tokenService');
 
 function passwordMeetsRules(password) {
@@ -66,18 +68,55 @@ const register = asyncHandler(async (req, res) => {
   const passwordHash = await bcrypt.hash(password, Number(process.env.BCRYPT_SALT_ROUNDS || 10));
 
   const shouldAutoVerify = !process.env.EMAIL_HOST || process.env.EMAIL_HOST === 'replace_me' || process.env.NODE_ENV === 'development';
+  
+  // Generate 6-digit OTP code. In dev mode, default is '123456' for ease of testing.
+  const otp = shouldAutoVerify ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
+  const tokenHash = hashToken(otp);
 
   const user = await User.create({
     name: name || undefined,
     email: email.toLowerCase().trim(),
     passwordHash,
-    role: role && ['admin', 'bloodbank', 'hospital'].includes(role) ? role : 'bloodbank',
-    isEmailVerified: shouldAutoVerify ? true : false,
+    role: role && ['admin', 'bloodbank', 'hospital', 'donor'].includes(role) ? role : 'bloodbank',
+    isEmailVerified: false, // OTP is required to complete registration flow
+    emailVerificationToken: tokenHash,
+    emailVerificationExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
   });
+
+  // Log OTP for easy development access
+  console.log(`\n==================================================`);
+  console.log(`[OTP] Verification OTP for ${user.email}: ${otp}`);
+  console.log(`==================================================\n`);
+
+  // Initialize Donor profile if registered as donor
+  if (user.role === 'donor') {
+    await Donor.create({
+      user: user._id,
+      name: user.name,
+      phone: '',
+      gender: 'other',
+      bloodGroup: 'O+',
+      eligibilityStatus: 'eligible',
+    });
+  }
+
+  // Initialize Hospital profile if registered as hospital
+  if (user.role === 'hospital') {
+    await Hospital.create({
+      user: user._id,
+      hospitalName: user.name || 'Hospital ' + user._id.toString().slice(-4),
+      approvalStatus: shouldAutoVerify ? 'approved' : 'pending',
+    });
+  }
 
   if (!shouldAutoVerify) {
     try {
-      await sendEmailVerification(user);
+      await sendMail({
+        to: user.email,
+        subject: 'Verify your email - Snigx Blood Bank',
+        text: `Your OTP code is: ${otp}`,
+        html: `<p>Your email verification OTP code is:</p><h3>${otp}</h3>`,
+      });
     } catch (err) {
       console.error('Failed to send verification email, but user was created:', err);
     }
@@ -85,10 +124,8 @@ const register = asyncHandler(async (req, res) => {
 
   return res.status(201).json({
     success: true,
-    message: shouldAutoVerify 
-      ? 'Registration successful. Account automatically verified.' 
-      : 'Registration successful. Please verify your email.',
-    data: { userId: user._id },
+    message: 'Registration successful. Please enter the 6-digit OTP sent to your email address.',
+    data: { userId: user._id, email: user.email },
     statusCode: 201,
   });
 });
@@ -231,5 +268,88 @@ const resetPassword = asyncHandler(async (req, res) => {
   return res.status(200).json({ success: true, message: 'Password reset successfully', data: null, statusCode: 200 });
 });
 
-module.exports = { register, verifyEmail, login, logout, forgotPassword, resetPassword };
+const verifyOtp = asyncHandler(async (req, res) => {
+  const { email, token } = req.body || {};
+  if (!email || !token) {
+    return res.status(400).json({ success: false, message: 'Email and OTP token are required', data: null, statusCode: 400 });
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase().trim() });
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found', data: null, statusCode: 404 });
+  }
+
+  const tokenHash = hashToken(token);
+  const isMatch = user.emailVerificationToken === tokenHash || user.emailVerificationToken === token;
+
+  if (!isMatch) {
+    return res.status(400).json({ success: false, message: 'Invalid or expired OTP', data: null, statusCode: 400 });
+  }
+
+  if (!user.emailVerificationExpiresAt || user.emailVerificationExpiresAt.getTime() < Date.now()) {
+    return res.status(400).json({ success: false, message: 'OTP has expired', data: null, statusCode: 400 });
+  }
+
+  user.isEmailVerified = true;
+  user.emailVerificationToken = undefined;
+  user.emailVerificationExpiresAt = undefined;
+  await user.save();
+
+  const accessToken = signAccessToken({ userId: user._id, role: user.role });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Email verified successfully',
+    data: {
+      accessToken,
+      user: { id: user._id, role: user.role, email: user.email, name: user.name }
+    },
+    statusCode: 200
+  });
+});
+
+const resendOtp = asyncHandler(async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) {
+    return res.status(400).json({ success: false, message: 'Email is required', data: null, statusCode: 400 });
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase().trim() });
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found', data: null, statusCode: 404 });
+  }
+
+  const shouldAutoVerify = !process.env.EMAIL_HOST || process.env.EMAIL_HOST === 'replace_me' || process.env.NODE_ENV === 'development';
+  const otp = shouldAutoVerify ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
+  const tokenHash = hashToken(otp);
+
+  user.emailVerificationToken = tokenHash;
+  user.emailVerificationExpiresAt = new Date(Date.now() + 60 * 60 * 1000);
+  await user.save();
+
+  console.log(`\n==================================================`);
+  console.log(`[OTP] Verification OTP for ${user.email} (Resent): ${otp}`);
+  console.log(`==================================================\n`);
+
+  if (!shouldAutoVerify) {
+    try {
+      await sendMail({
+        to: user.email,
+        subject: 'Verify your email - Snigx Blood Bank',
+        text: `Your OTP is: ${otp}`,
+        html: `<p>Your email verification OTP code is:</p><h3>${otp}</h3>`,
+      });
+    } catch (err) {
+      console.error('Failed to send resend-verification email:', err);
+    }
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'OTP sent successfully',
+    statusCode: 200
+  });
+});
+
+module.exports = { register, verifyEmail, login, logout, forgotPassword, resetPassword, verifyOtp, resendOtp };
 

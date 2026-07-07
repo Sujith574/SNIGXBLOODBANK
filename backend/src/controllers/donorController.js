@@ -5,13 +5,16 @@ const Donor = require('../models/Donor');
 const getDonors = asyncHandler(async (req, res) => {
   const { userId } = req.user;
 
-  const donors = await Donor.find({ bloodbankId: userId }).sort({ createdAt: -1 }).lean();
+  const donors = await Donor.find({ bloodbankId: userId })
+    .populate('user')
+    .sort({ createdAt: -1 })
+    .lean();
 
   return res.status(200).json({
     success: true,
     data: donors.map((d) => ({
       id: d._id,
-      name: d.name || null,
+      name: d.name || d.user?.name || 'Anonymous',
       phone: d.phone,
       gender: d.gender,
       weight_kg: d.weightKg,
@@ -29,6 +32,7 @@ const getDonors = asyncHandler(async (req, res) => {
 const createDonor = asyncHandler(async (req, res) => {
   const { userId } = req.user;
   const {
+    name,
     phone,
     gender,
     weightKg,
@@ -52,6 +56,7 @@ const createDonor = asyncHandler(async (req, res) => {
 
   const donor = await Donor.create({
     bloodbankId: userId,
+    name,
     phone,
     gender,
     weightKg: weightKg ? Number(weightKg) : undefined,

@@ -7,6 +7,7 @@ const donorRoutes = require('../routes/donorRoutes');
 const hospitalRoutes = require('../routes/hospitalRoutes');
 const adminRoutes = require('../routes/adminRoutes');
 const searchRoutes = require('../routes/searchRoutes');
+const appointmentRoutes = require('../routes/appointmentRoutes');
 
 function registerRoutes(app) {
   const router = express.Router();
@@ -34,6 +35,9 @@ function registerRoutes(app) {
 
   // Blood availability search
   router.use('/blood', searchRoutes);
+
+  // Appointments (donors book)
+  router.use('/appointments', appointmentRoutes);
 
   app.use('/api', router);
 }

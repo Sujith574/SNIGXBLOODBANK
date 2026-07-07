@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const DonorSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    name: { type: String, trim: true },
     bloodbankId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
     phone: { type: String, trim: true },
     gender: { type: String, enum: ['male', 'female', 'other'] },

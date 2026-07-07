@@ -4,6 +4,7 @@ const BloodInventory = require('../models/BloodInventory');
 const BloodRequest = require('../models/BloodRequest');
 const Donor = require('../models/Donor');
 const Hospital = require('../models/Hospital');
+const Appointment = require('../models/Appointment');
 
 // GET /api/dashboard/stats
 const getDashboardStats = asyncHandler(async (req, res) => {
@@ -96,6 +97,59 @@ const getDashboardStats = asyncHandler(async (req, res) => {
         pending_requests: allRequests.filter((r) => r.status === 'pending').length,
         fulfilled_requests: allRequests.filter((r) => r.status === 'completed').length,
         total_donors: totalDonors,
+      },
+      statusCode: 200,
+    });
+  }
+
+  if (role === 'donor') {
+    let donorProfile = await Donor.findOne({ user: userId }).lean();
+    if (!donorProfile) {
+      // Create dynamically if not found
+      const newDonor = await Donor.create({
+        user: userId,
+        phone: '',
+        gender: 'other',
+        bloodGroup: 'O+',
+        eligibilityStatus: 'eligible',
+      });
+      donorProfile = newDonor.toObject();
+    }
+
+    const [appointments, activeRequests] = await Promise.all([
+      Appointment.find({ donor: donorProfile._id })
+        .populate('hospital')
+        .sort({ appointmentDateTime: -1 })
+        .limit(10)
+        .lean(),
+      BloodRequest.find({ status: { $ne: 'completed' } })
+        .sort({ createdAt: -1 })
+        .limit(15)
+        .lean(),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      stats: {
+        eligibility: {
+          eligibility_status: donorProfile.eligibilityStatus || 'eligible',
+        },
+        appointments: appointments.map((a) => ({
+          id: a._id,
+          appointment_date_time: a.appointmentDateTime,
+          status: a.status || 'scheduled',
+          note: a.note || '',
+          hospital_name: a.hospital?.hospitalName || 'Metro General Hospital',
+        })),
+        requests: activeRequests.map((r) => ({
+          id: r._id,
+          patient_name: r.patientName,
+          blood_group: r.bloodGroup,
+          units_required: r.unitsRequired,
+          emergency_level: r.emergencyLevel,
+          reason: r.reason,
+          required_date: r.requiredDate,
+        })),
       },
       statusCode: 200,
     });

@@ -24,6 +24,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState(false);
 
   // Show success banner when redirected from OTP verification
   const justVerified = (location.state as any)?.verified === true;
@@ -31,6 +32,7 @@ export default function Login() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setPendingApproval(false);
 
     if (!email || !password) {
       setError('Email and password are required');
@@ -42,7 +44,12 @@ export default function Login() {
       await login({ email, password, remember });
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Login failed');
+      const responseData = err?.response?.data;
+      if (responseData?.pendingApproval) {
+        setPendingApproval(true);
+      } else {
+        setError(responseData?.message || err?.message || 'Login failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -198,17 +205,17 @@ export default function Login() {
 
             {/* Notifications & Error messages */}
             <AnimatePresence mode="wait">
-              {justVerified && !error && (
+              {pendingApproval && (
                 <motion.div
                   initial={{ opacity: 0, y: -5 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-4 py-3 text-sm flex items-center gap-2"
+                  className="rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 px-4 py-3 text-sm flex items-start gap-2"
                 >
-                  <FiCheck className="flex-shrink-0 w-5 h-5 font-bold" />
-                  <span>Email verified! You can now sign in.</span>
+                  <span className="flex-shrink-0 mt-0.5">⏳</span>
+                  <span>Your account is <strong>pending admin approval</strong>. Please wait — you'll be notified once approved.</span>
                 </motion.div>
               )}
-              {error && (
+              {!pendingApproval && error && (
                 <motion.div
                   initial={{ opacity: 0, y: -5 }}
                   animate={{ opacity: 1, y: 0 }}

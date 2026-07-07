@@ -10,6 +10,7 @@ import AdminDashboard from '../pages/AdminDashboard';
 import BloodAvailabilitySearch from '../pages/BloodAvailabilitySearch';
 import BloodRequestStatus from '../pages/BloodRequestStatus';
 import DonorAvailabilityList from '../pages/DonorAvailabilityList';
+import DonorDashboard from '../pages/DonorDashboard';
 
 // Guard that redirects unauthenticated users to login
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -54,6 +55,7 @@ function Dashboard() {
   const { user } = useAuth();
   if (user?.role === 'admin') return <AdminDashboard />;
   if (user?.role === 'hospital') return <HospitalDashboard />;
+  if (user?.role === 'donor') return <DonorDashboard />;
   return <BloodbankDashboard />;
 }
 

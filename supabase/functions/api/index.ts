@@ -1,12 +1,13 @@
-// Supabase Edge Function – Blood Bank API (v4)
-// Formatted to match Axios response parsing in the React frontend.
+// Supabase Edge Function – Blood Bank API (v5)
+// Admin-approval flow — no OTP. Admin credentials are hardcoded.
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-const APP_BASE_URL = Deno.env.get("APP_BASE_URL") ?? "http://localhost:5173";
-const SENDGRID_API_KEY = Deno.env.get("SENDGRID_API_KEY") ?? "";
-const FROM_EMAIL = Deno.env.get("FROM_EMAIL") ?? "no-reply@example.com";
+
+// ── Hardcoded admin credentials ──────────────────────────────
+const ADMIN_EMAIL = "snigxbloodbank.in";
+const ADMIN_PASSWORD = "snigx0207";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -21,17 +22,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-async function sha256hex(input: string): Promise<string> {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function randomHex(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(32)))
-    .map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-// REST call to Supabase (service role)
+// ── REST helpers (service role) ──────────────────────────────
 async function svcFetch(path: string, method: string, body?: unknown) {
   const res = await fetch(SUPABASE_URL + path, {
     method,
@@ -49,7 +40,6 @@ async function svcFetch(path: string, method: string, body?: unknown) {
   return { ok: res.ok, status: res.status, data };
 }
 
-// REST query on a table
 async function dbSelect(table: string, filter: string) {
   const res = await fetch(SUPABASE_URL + "/rest/v1/" + table + "?" + filter, {
     headers: {
@@ -91,6 +81,24 @@ async function dbPatch(table: string, filter: string, patch: unknown) {
   return { ok: res.ok, status: res.status, data };
 }
 
+async function dbDelete(table: string, filter: string) {
+  const res = await fetch(SUPABASE_URL + "/rest/v1/" + table + "?" + filter, {
+    method: "DELETE",
+    headers: {
+      "Authorization": "Bearer " + SVC_KEY,
+      "apikey": SVC_KEY,
+    },
+  });
+  return { ok: res.ok, status: res.status };
+}
+
+// ── HEALTH ───────────────────────────────────────────────────
+function health(): Response {
+  return json({ status: "ok", timestamp: new Date().toISOString() });
+}
+
+// ──────────────────────────────────────────────────────────
+// REGISTER  (no OTP — account pending admin approval)
 // ──────────────────────────────────────────────────────────
 async function register(req: Request): Promise<Response> {
   const { name, email, password, role } = await req.json();
@@ -98,10 +106,15 @@ async function register(req: Request): Promise<Response> {
     return json({ success: false, message: "name, email and password are required" }, 400);
   }
 
+  // Admin account cannot be registered through the form
+  if (email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+    return json({ success: false, message: "This email is reserved." }, 400);
+  }
+
   const allowedRoles = ["bloodbank", "hospital", "donor"];
   const userRole = allowedRoles.includes(role) ? role : "bloodbank";
 
-  // Step 1: Sign up the user via Supabase Auth admin endpoint (service role — no ANON_KEY needed)
+  // Create user via admin API (email auto-confirmed so Supabase allows password sign-in)
   const signupRes = await fetch(SUPABASE_URL + "/auth/v1/admin/users", {
     method: "POST",
     headers: {
@@ -112,7 +125,7 @@ async function register(req: Request): Promise<Response> {
     body: JSON.stringify({
       email,
       password,
-      email_confirm: false,
+      email_confirm: true,           // confirm email so token login works
       user_metadata: { name, role: userRole },
     })
   });
@@ -121,211 +134,137 @@ async function register(req: Request): Promise<Response> {
 
   if (!signupRes.ok) {
     const msg = String(signupData.msg ?? signupData.message ?? signupData.error_description ?? "Registration failed");
-    if (!msg.toLowerCase().includes("already")) {
-      return json({ success: false, message: msg }, 400);
-    }
+    return json({ success: false, message: msg }, 400);
   }
 
-  const userId = signupData.user ? (signupData.user as Record<string, string>).id : null;
+  const userId = (signupData.user as Record<string, string> | undefined)?.id
+    ?? (signupData as Record<string, string>).id
+    ?? null;
 
-  // Step 2: Create/update profile row if user was created
-  if (userId) {
-    await dbUpsert("profiles", {
-      id: userId,
-      name,
-      email,
-      role: userRole,
-      is_email_verified: false,
-    });
+  if (!userId) {
+    return json({ success: false, message: "User created but ID not returned. Please contact support." }, 500);
   }
 
-  // Step 3: Trigger OTP email via the public OTP endpoint (requires ANON_KEY, not service role)
-  const otpRes = await fetch(SUPABASE_URL + "/auth/v1/otp", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": ANON_KEY,
-    },
-    body: JSON.stringify({
-      email,
-      create_user: false,
-    }),
+  // Create profile with is_approved = false (pending admin approval)
+  await dbUpsert("profiles", {
+    id: userId,
+    name,
+    email,
+    role: userRole,
+    is_email_verified: true,
+    is_approved: false,
   });
-
-  if (!otpRes.ok) {
-    const otpData = await otpRes.json() as Record<string, unknown>;
-    const msg = String(otpData.msg ?? otpData.message ?? otpData.error_description ?? "Failed to send OTP email");
-    return json({ success: false, message: msg }, 500);
-  }
 
   return json({
     success: true,
-    message: "Account created! Please enter the 6-digit OTP sent to your email address.",
-    requireOtp: true,
+    message: "Account created! Your account is pending admin approval. You will be able to login once approved.",
+    pendingApproval: true,
   }, 201);
 }
 
 // ──────────────────────────────────────────────────────────
-// VERIFY OTP  (Step 2: verify the 6-digit OTP)
-// ──────────────────────────────────────────────────────────
-async function verifyOtp(req: Request): Promise<Response> {
-  const { email, token } = await req.json();
-  if (!email || !token) {
-    return json({ success: false, message: "email and OTP token are required" }, 400);
-  }
-
-  // Verify OTP with Supabase public verify endpoint (requires ANON_KEY)
-  const verifyRes = await fetch(SUPABASE_URL + "/auth/v1/verify", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": ANON_KEY,
-    },
-    body: JSON.stringify({
-      email,
-      token,
-      type: "email",
-    }),
-  });
-
-  const verifyData = await verifyRes.json() as Record<string, unknown>;
-
-  if (!verifyRes.ok) {
-    const msg = String(
-      verifyData.error_description ?? verifyData.msg ?? verifyData.message ?? verifyData.error ?? "Invalid or expired OTP"
-    );
-    return json({ success: false, message: msg }, 400);
-  }
-
-  // OTP verified — extract user ID from response
-  const verifiedUser = verifyData.user as Record<string, unknown> | undefined;
-  const userId = verifiedUser?.id as string | undefined;
-
-  if (userId) {
-    // Mark profile as email verified
-    await dbPatch("profiles", "id=eq." + userId, {
-      is_email_verified: true,
-    });
-  }
-
-  // Return access token so user is auto-logged in right after verification
-  const accessToken = verifyData.access_token as string | undefined;
-  const refreshToken = verifyData.refresh_token as string | undefined;
-
-  if (userId && accessToken) {
-    const pRes = await dbSelect("profiles", "id=eq." + userId + "&select=name,role&limit=1");
-    const profile = Array.isArray(pRes.data) && pRes.data.length > 0
-      ? pRes.data[0] as Record<string, unknown>
-      : null;
-
-    return json({
-      success: true,
-      message: "Email verified successfully! You are now logged in.",
-      data: {
-        accessToken,
-        refreshToken,
-        user: {
-          id: userId,
-          email,
-          name: profile?.name ?? "",
-          role: profile?.role ?? "",
-        },
-      },
-    });
-  }
-
-  // Verification succeeded but no session returned — ask user to log in
-  return json({
-    success: true,
-    message: "Email verified successfully! Please log in to continue.",
-  });
-}
-
-// ──────────────────────────────────────────────────────────
-// RESEND OTP
-// ──────────────────────────────────────────────────────────
-async function resendOtp(req: Request): Promise<Response> {
-  const { email } = await req.json();
-  if (!email) return json({ success: false, message: "email is required" }, 400);
-
-  const otpRes = await fetch(SUPABASE_URL + "/auth/v1/otp", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": ANON_KEY,
-    },
-    body: JSON.stringify({
-      email,
-      create_user: false,
-    }),
-  });
-
-  const otpData = await otpRes.json() as Record<string, unknown>;
-
-  if (!otpRes.ok) {
-    const msg = String(otpData.msg ?? otpData.message ?? otpData.error_description ?? "Failed to resend OTP");
-    return json({ success: false, message: msg }, 500);
-  }
-
-  return json({ success: true, message: "Verification OTP resent successfully." });
-}
-
-// ──────────────────────────────────────────────────────────
-// VERIFY EMAIL
-// ──────────────────────────────────────────────────────────
-async function verifyEmail(req: Request): Promise<Response> {
-  const { token } = await req.json();
-  if (!token) return json({ success: false, message: "token is required" }, 400);
-
-  const tokenHash = await sha256hex(token);
-
-  const profileRes = await dbSelect(
-    "profiles",
-    "email_verification_token=eq." + encodeURIComponent(tokenHash) +
-    "&select=id,is_email_verified,email_verification_expires_at&limit=1"
-  );
-
-  if (!profileRes.ok || !Array.isArray(profileRes.data) || profileRes.data.length === 0) {
-    return json({ success: false, message: "Invalid or expired token" }, 400);
-  }
-
-  const profile = profileRes.data[0] as Record<string, unknown>;
-
-  if (profile.is_email_verified) return json({ success: true, message: "Email already verified" });
-
-  if (new Date(profile.email_verification_expires_at as string) < new Date()) {
-    return json({ success: false, message: "Token has expired. Please register again." }, 400);
-  }
-
-  // 1. Mark verified in profiles table
-  await dbPatch("profiles", "id=eq." + (profile.id as string), {
-    is_email_verified: true,
-    email_verification_token: null,
-    email_verification_expires_at: null,
-  });
-
-  // 2. Confirm email in Supabase Auth
-  await svcFetch("/auth/v1/admin/users/" + (profile.id as string), "PUT", {
-    email_confirm: true,
-  });
-
-  return json({ success: true, message: "Email verified successfully! You can now log in." });
-}
-
-// ──────────────────────────────────────────────────────────
-// LOGIN
+// LOGIN  (admin hardcoded + approval check for others)
 // ──────────────────────────────────────────────────────────
 async function login(req: Request): Promise<Response> {
   const { email, password } = await req.json();
   if (!email || !password) return json({ success: false, message: "email and password are required" }, 400);
 
-  // Sign in via Supabase Auth password flow
+  // ── Hardcoded admin login ──
+  if (email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+    if (password !== ADMIN_PASSWORD) {
+      return json({ success: false, message: "Invalid admin credentials" }, 401);
+    }
+
+    // Ensure admin user exists in Supabase Auth
+    let adminUserId: string | null = null;
+
+    // Try to find admin by email in profiles first
+    const adminProfileRes = await dbSelect("profiles", "email=eq." + encodeURIComponent(ADMIN_EMAIL) + "&role=eq.admin&limit=1");
+    if (Array.isArray(adminProfileRes.data) && adminProfileRes.data.length > 0) {
+      adminUserId = (adminProfileRes.data[0] as Record<string, string>).id;
+    }
+
+    if (!adminUserId) {
+      // Create admin user in Supabase Auth
+      const createRes = await fetch(SUPABASE_URL + "/auth/v1/admin/users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + SVC_KEY,
+          "apikey": SVC_KEY,
+        },
+        body: JSON.stringify({
+          email: ADMIN_EMAIL,
+          password: ADMIN_PASSWORD,
+          email_confirm: true,
+          user_metadata: { name: "Admin", role: "admin" },
+        })
+      });
+      const createData = await createRes.json() as Record<string, unknown>;
+      adminUserId = (createData.user as Record<string, string> | undefined)?.id
+        ?? (createData as Record<string, string>).id
+        ?? null;
+
+      if (adminUserId) {
+        await dbUpsert("profiles", {
+          id: adminUserId,
+          name: "Admin",
+          email: ADMIN_EMAIL,
+          role: "admin",
+          is_email_verified: true,
+          is_approved: true,
+        });
+      }
+    }
+
+    if (!adminUserId) {
+      return json({ success: false, message: "Admin setup failed. Contact system owner." }, 500);
+    }
+
+    // Sign in admin via Supabase token
+    const signInRes = await fetch(SUPABASE_URL + "/auth/v1/token?grant_type=password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": ANON_KEY },
+      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+    });
+    const signInData = await signInRes.json() as Record<string, unknown>;
+
+    if (!signInRes.ok) {
+      // Fallback: update admin password and retry
+      await svcFetch("/auth/v1/admin/users/" + adminUserId, "PUT", { password: ADMIN_PASSWORD });
+      const retryRes = await fetch(SUPABASE_URL + "/auth/v1/token?grant_type=password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": ANON_KEY },
+        body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+      });
+      const retryData = await retryRes.json() as Record<string, unknown>;
+      if (!retryRes.ok) {
+        return json({ success: false, message: "Admin login failed. Try again." }, 500);
+      }
+      return json({
+        success: true,
+        data: {
+          accessToken: retryData.access_token,
+          refreshToken: retryData.refresh_token,
+          user: { id: adminUserId, email: ADMIN_EMAIL, name: "Admin", role: "admin" },
+        },
+      });
+    }
+
+    return json({
+      success: true,
+      data: {
+        accessToken: signInData.access_token,
+        refreshToken: signInData.refresh_token,
+        user: { id: adminUserId, email: ADMIN_EMAIL, name: "Admin", role: "admin" },
+      },
+    });
+  }
+
+  // ── Regular user login ──
   const signInRes = await fetch(SUPABASE_URL + "/auth/v1/token?grant_type=password", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": ANON_KEY,
-    },
+    headers: { "Content-Type": "application/json", "apikey": ANON_KEY },
     body: JSON.stringify({ email, password }),
   });
 
@@ -340,13 +279,21 @@ async function login(req: Request): Promise<Response> {
   const accessToken = signInData.access_token as string;
   const refreshToken = signInData.refresh_token as string;
 
-  // Fetch profile info
-  const pRes = await dbSelect("profiles", "id=eq." + userId + "&select=is_email_verified,name,role&limit=1");
+  // Fetch profile and check approval status
+  const pRes = await dbSelect("profiles", "id=eq." + userId + "&select=is_approved,name,role&limit=1");
   const profiles = Array.isArray(pRes.data) ? pRes.data : [];
   const profile = profiles[0] as Record<string, unknown> | undefined;
 
-  if (!profile || !profile.is_email_verified) {
-    return json({ success: false, message: "Email not verified. Please check your inbox." }, 403);
+  if (!profile) {
+    return json({ success: false, message: "Account not found. Please register first." }, 404);
+  }
+
+  if (!profile.is_approved) {
+    return json({
+      success: false,
+      message: "Your account is pending admin approval. Please wait for the admin to approve your account before logging in.",
+      pendingApproval: true,
+    }, 403);
   }
 
   return json({
@@ -362,13 +309,6 @@ async function login(req: Request): Promise<Response> {
       },
     },
   });
-}
-
-// ──────────────────────────────────────────────────────────
-// HEALTH
-// ──────────────────────────────────────────────────────────
-function health(): Response {
-  return json({ status: "ok", timestamp: new Date().toISOString() });
 }
 
 // ──────────────────────────────────────────────────────────
@@ -388,17 +328,14 @@ Deno.serve(async (req: Request) => {
   try {
     if (req.method === "GET" && path === "/health") return health();
     if (req.method === "POST" && path === "/register") return await register(req);
-    if (req.method === "POST" && path === "/verify-otp") return await verifyOtp(req);
-    if (req.method === "POST" && path === "/resend-otp") return await resendOtp(req);
-    if (req.method === "POST" && path === "/verify-email") return await verifyEmail(req);
     if (req.method === "POST" && path === "/login") return await login(req);
 
-    // Get Auth Context (userId and role)
+    // ── Authenticated routes ────────────────────────────────
     const authHeader = req.headers.get("Authorization") ?? "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
     if (!token) return json({ success: false, message: "Unauthorized" }, 401);
 
-    // Verify token & extract user profile information
+    // Verify token & extract user info
     const userProfileRes = await fetch(SUPABASE_URL + "/auth/v1/user", {
       headers: {
         "Authorization": "Bearer " + token,
@@ -410,7 +347,7 @@ Deno.serve(async (req: Request) => {
     const userId = userData.id;
 
     // Fetch user profile role from DB
-    const dbProfileRes = await dbSelect("profiles", "id=eq." + userId + "&select=role,name&limit=1");
+    const dbProfileRes = await dbSelect("profiles", "id=eq." + userId + "&select=role,name,is_approved&limit=1");
     if (!dbProfileRes.ok || !Array.isArray(dbProfileRes.data) || dbProfileRes.data.length === 0) {
       return json({ success: false, message: "User profile not found" }, 404);
     }
@@ -441,16 +378,27 @@ Deno.serve(async (req: Request) => {
             hospitalInfo: hospProfile.data?.[0] ?? { is_approved: false }
           }
         });
-      } else if (userRole === "admin") {
-        const totalUsers = await dbSelect("profiles", "select=id");
-        const unapprovedHospitals = await dbSelect("hospitals", "is_approved=eq.false");
-        const requests = await dbSelect("blood_requests", "select=id");
+      } else if (userRole === "donor") {
+        const donorProfile = await dbSelect("donors", "user_id=eq." + userId + "&limit=1");
         return json({
           success: true,
           stats: {
-            totalUsersCount: Array.isArray(totalUsers.data) ? totalUsers.data.length : 0,
-            unapprovedHospitals: unapprovedHospitals.data ?? [],
-            totalRequestsCount: Array.isArray(requests.data) ? requests.data.length : 0,
+            donorInfo: donorProfile.data?.[0] ?? null,
+          }
+        });
+      } else if (userRole === "admin") {
+        const [bbRes, hospRes, reqRes, pendingRes] = await Promise.all([
+          dbSelect("profiles", "role=eq.bloodbank&select=id"),
+          dbSelect("profiles", "role=eq.hospital&select=id"),
+          dbSelect("blood_requests", "select=id,status"),
+          dbSelect("profiles", "is_approved=eq.false&role=neq.admin&select=id"),
+        ]);
+        return json({
+          success: true,
+          stats: {
+            totalUsersCount: (Array.isArray(bbRes.data) ? bbRes.data.length : 0) + (Array.isArray(hospRes.data) ? hospRes.data.length : 0),
+            pendingApprovals: Array.isArray(pendingRes.data) ? pendingRes.data.length : 0,
+            totalRequestsCount: Array.isArray(reqRes.data) ? reqRes.data.length : 0,
           }
         });
       }
@@ -464,7 +412,6 @@ Deno.serve(async (req: Request) => {
       }
       if (req.method === "POST" && userRole === "bloodbank") {
         const body = await req.json();
-        // Use PATCH if record exists, otherwise INSERT
         const existingRes = await dbSelect("blood_inventory", "hospital_id=eq." + userId + "&blood_group=eq." + encodeURIComponent(body.bloodGroup) + "&limit=1");
         const existing = Array.isArray(existingRes.data) && existingRes.data.length > 0 ? existingRes.data[0] as { id: string } : null;
         let res;
@@ -515,7 +462,6 @@ Deno.serve(async (req: Request) => {
       const body = await req.json();
       const { requestId, unitsProvided, bloodGroup } = body;
 
-      // 1. Record fulfillment
       const fulfillmentRes = await dbUpsert("fulfillments", {
         request_id: requestId,
         bloodbank_id: userId,
@@ -524,25 +470,21 @@ Deno.serve(async (req: Request) => {
 
       if (!fulfillmentRes.ok) return json({ success: false, message: "Failed to record fulfillment transaction" }, 500);
 
-      // 2. Fetch original request details
       const reqDetails = await dbSelect("blood_requests", "id=eq." + requestId + "&limit=1");
       if (reqDetails.ok && Array.isArray(reqDetails.data) && reqDetails.data.length > 0) {
-        const request = reqDetails.data[0];
+        const request = reqDetails.data[0] as Record<string, number>;
         const remainingRequired = Math.max(0, request.units_required - Number(unitsProvided));
-        
-        // Update request status if completely fulfilled
         await dbPatch("blood_requests", "id=eq." + requestId, {
           units_required: remainingRequired,
           status: remainingRequired === 0 ? "completed" : "pending"
         });
       }
 
-      // 3. Deduct units from inventory if exists
       const stockDetails = await dbSelect("blood_inventory", "hospital_id=eq." + userId + "&blood_group=eq." + bloodGroup + "&limit=1");
       if (stockDetails.ok && Array.isArray(stockDetails.data) && stockDetails.data.length > 0) {
-        const currentUnits = stockDetails.data[0].units_available;
-        await dbPatch("blood_inventory", "id=eq." + stockDetails.data[0].id, {
-          units_available: Math.max(0, currentUnits - Number(unitsProvided)),
+        const stock = stockDetails.data[0] as Record<string, number | string>;
+        await dbPatch("blood_inventory", "id=eq." + stock.id, {
+          units_available: Math.max(0, (stock.units_available as number) - Number(unitsProvided)),
           updated_at: new Date().toISOString()
         });
       }
@@ -594,30 +536,18 @@ Deno.serve(async (req: Request) => {
       return json({ success: res.ok, message: res.ok ? "Profile submitted for review" : "Submission failed" });
     }
 
-    // ─── HOSPITAL VERIFICATION (ADMIN ONLY) ───
-    if (path === "/admin/approve-hospital" && req.method === "POST" && userRole === "admin") {
-      const body = await req.json();
-      const res = await dbPatch("hospitals", "id=eq." + body.hospitalId, { is_approved: true });
-      return json({ success: res.ok, message: res.ok ? "Hospital approved successfully" : "Approval failed" });
-    }
-
-    // ─── BLOOD AVAILABILITY SEARCH (hospital authenticated) ───
+    // ─── BLOOD AVAILABILITY SEARCH ───
     if (path === "/blood/availability" && req.method === "GET") {
-      const url = new URL(req.url);
-      const bloodGroup = url.searchParams.get("blood_group");
-      const city = url.searchParams.get("city");
-      const state = url.searchParams.get("state");
+      const searchParams = new URL(req.url).searchParams;
+      const bloodGroup = searchParams.get("blood_group");
+      const city = searchParams.get("city");
+      const state = searchParams.get("state");
 
-      let filter = "select=bloodbank_id,blood_group,units_available,profiles!inner(name,email)";
-      const conditions: string[] = [];
-      if (bloodGroup) conditions.push("blood_group=eq." + bloodGroup);
-      if (city) conditions.push("city=eq." + city);
-      // Join from blood_inventory → profile
       let inventoryFilter = "units_available=gt.0";
       if (bloodGroup) inventoryFilter += "&blood_group=eq." + bloodGroup;
 
       const invRes = await dbSelect("blood_inventory", inventoryFilter + "&select=bloodbank_id,blood_group,units_available");
-      const profilesRes = await dbSelect("profiles", "role=eq.bloodbank&select=id,name,email,city,state");
+      const profilesRes = await dbSelect("profiles", "role=eq.bloodbank&is_approved=eq.true&select=id,name,email,city,state");
 
       if (!invRes.ok || !profilesRes.ok) {
         return json({ success: false, message: "Failed to fetch availability" }, 500);
@@ -657,7 +587,7 @@ Deno.serve(async (req: Request) => {
 
     // ─── GET CURRENT USER PROFILE ───
     if (path === "/profile" && req.method === "GET") {
-      const pRes = await dbSelect("profiles", "id=eq." + userId + "&select=id,name,email,role,city,state,is_email_verified,created_at&limit=1");
+      const pRes = await dbSelect("profiles", "id=eq." + userId + "&select=id,name,email,role,city,state,is_email_verified,is_approved,created_at&limit=1");
       const p = Array.isArray(pRes.data) && pRes.data.length > 0 ? pRes.data[0] : null;
       if (!p) return json({ success: false, message: "Profile not found" }, 404);
       return json({ success: true, data: p });
@@ -687,15 +617,42 @@ Deno.serve(async (req: Request) => {
       return json({ success: true, data: res.data ?? [] });
     }
 
+    // ═══════════════════════════════════════════════════════
+    // ADMIN ROUTES (require admin role)
+    // ═══════════════════════════════════════════════════════
+
+    // ─── ADMIN: PENDING APPROVALS ───
+    if (path === "/admin/pending-users" && req.method === "GET" && userRole === "admin") {
+      const res = await dbSelect("profiles", "is_approved=eq.false&role=neq.admin&select=id,name,email,role,created_at&order=created_at.asc");
+      return json({ success: true, data: res.data ?? [] });
+    }
+
+    // ─── ADMIN: APPROVE USER ───
+    if (path === "/admin/approve-user" && req.method === "POST" && userRole === "admin") {
+      const body = await req.json();
+      const res = await dbPatch("profiles", "id=eq." + body.userId, { is_approved: true });
+      return json({ success: res.ok, message: res.ok ? "User approved successfully" : "Approval failed" });
+    }
+
+    // ─── ADMIN: REJECT / DELETE USER ───
+    if (path === "/admin/reject-user" && req.method === "POST" && userRole === "admin") {
+      const body = await req.json();
+      // Delete profile
+      await dbDelete("profiles", "id=eq." + body.userId);
+      // Delete from Supabase Auth
+      await svcFetch("/auth/v1/admin/users/" + body.userId, "DELETE");
+      return json({ success: true, message: "User rejected and removed." });
+    }
+
     // ─── ADMIN: LIST ALL BLOOD BANKS ───
     if (path === "/admin/bloodbanks" && req.method === "GET" && userRole === "admin") {
-      const res = await dbSelect("profiles", "role=eq.bloodbank&select=id,name,email,city,state,is_email_verified,created_at&order=created_at.desc");
+      const res = await dbSelect("profiles", "role=eq.bloodbank&select=id,name,email,city,state,is_approved,created_at&order=created_at.desc");
       return json({ success: true, data: res.data ?? [] });
     }
 
     // ─── ADMIN: LIST ALL HOSPITALS ───
     if (path === "/admin/hospitals" && req.method === "GET" && userRole === "admin") {
-      const profilesRes = await dbSelect("profiles", "role=eq.hospital&select=id,name,email,city,state,created_at&order=created_at.desc");
+      const profilesRes = await dbSelect("profiles", "role=eq.hospital&select=id,name,email,city,state,is_approved,created_at&order=created_at.desc");
       const hospitalsRes = await dbSelect("hospitals", "select=id,doctor_name,registration_number,is_approved");
 
       const hospitalDetails: Record<string, { doctor_name?: string; is_approved?: boolean }> = {};
@@ -706,7 +663,7 @@ Deno.serve(async (req: Request) => {
       }
 
       const merged = Array.isArray(profilesRes.data)
-        ? (profilesRes.data as { id: string; name: string; email: string; city?: string; state?: string; created_at: string }[]).map((p) => ({
+        ? (profilesRes.data as { id: string; name: string; email: string; city?: string; state?: string; created_at: string; is_approved: boolean }[]).map((p) => ({
             ...p,
             ...(hospitalDetails[p.id] || {}),
           }))
@@ -715,19 +672,27 @@ Deno.serve(async (req: Request) => {
       return json({ success: true, data: merged });
     }
 
+    // ─── ADMIN: LIST ALL DONORS ───
+    if (path === "/admin/donors" && req.method === "GET" && userRole === "admin") {
+      const res = await dbSelect("profiles", "role=eq.donor&select=id,name,email,is_approved,created_at&order=created_at.desc");
+      return json({ success: true, data: res.data ?? [] });
+    }
+
     // ─── ADMIN: STATS ───
     if (path === "/admin/stats" && req.method === "GET" && userRole === "admin") {
-      const [bbRes, hospRes, reqRes, donorsRes] = await Promise.all([
+      const [bbRes, hospRes, reqRes, donorsRes, pendingRes] = await Promise.all([
         dbSelect("profiles", "role=eq.bloodbank&select=id"),
         dbSelect("profiles", "role=eq.hospital&select=id"),
         dbSelect("blood_requests", "select=id,status"),
         dbSelect("donors", "select=id"),
+        dbSelect("profiles", "is_approved=eq.false&role=neq.admin&select=id"),
       ]);
 
       const totalBB = Array.isArray(bbRes.data) ? bbRes.data.length : 0;
       const totalHosp = Array.isArray(hospRes.data) ? hospRes.data.length : 0;
       const allReqs = Array.isArray(reqRes.data) ? reqRes.data as { id: string; status: string }[] : [];
       const totalDonors = Array.isArray(donorsRes.data) ? donorsRes.data.length : 0;
+      const pendingApprovals = Array.isArray(pendingRes.data) ? pendingRes.data.length : 0;
 
       return json({
         success: true,
@@ -738,14 +703,20 @@ Deno.serve(async (req: Request) => {
           pending_requests: allReqs.filter((r) => r.status === "pending").length,
           fulfilled_requests: allReqs.filter((r) => r.status === "fulfilled" || r.status === "completed" || r.status === "partially_fulfilled").length,
           total_donors: totalDonors,
+          pending_approvals: pendingApprovals,
         },
       });
     }
 
-    return json({
-      success: false,
-      message: "Route not found: " + path,
-    }, 404);
+    // ─── ADMIN: APPROVE HOSPITAL (legacy) ───
+    if (path === "/admin/approve-hospital" && req.method === "POST" && userRole === "admin") {
+      const body = await req.json();
+      const res = await dbPatch("hospitals", "id=eq." + body.hospitalId, { is_approved: true });
+      return json({ success: res.ok, message: res.ok ? "Hospital approved successfully" : "Approval failed" });
+    }
+
+    return json({ success: false, message: "Route not found: " + path }, 404);
+
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Unhandled:", msg);

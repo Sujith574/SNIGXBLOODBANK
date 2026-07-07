@@ -39,6 +39,7 @@ export default function BloodbankDashboard() {
   const [loading, setLoading] = useState(true);
 
   // Donor Intake Form State
+  const [donorName, setDonorName] = useState('');
   const [donorPhone, setDonorPhone] = useState('');
   const [donorGender, setDonorGender] = useState('male');
   const [donorWeight, setDonorWeight] = useState('');
@@ -84,6 +85,7 @@ export default function BloodbankDashboard() {
     try {
       setMessage('Saving donor record...');
       const res = await api.post('/donors/create', {
+        name: donorName,
         phone: donorPhone,
         gender: donorGender,
         weightKg: Number(donorWeight),
@@ -98,6 +100,7 @@ export default function BloodbankDashboard() {
 
       if (res.data?.success) {
         setMessage('Blood Donor registered successfully!');
+        setDonorName('');
         setDonorPhone('');
         setDonorWeight('');
         setDonorDob('');
@@ -233,6 +236,15 @@ export default function BloodbankDashboard() {
                 <span>Donor Intake Register</span>
               </h3>
               <form onSubmit={handleRegisterDonor} className="space-y-3">
+                <input
+                  type="text"
+                  placeholder="Full Name"
+                  required
+                  value={donorName}
+                  onChange={(e) => setDonorName(e.target.value)}
+                  className="w-full px-3 py-2 bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-xs"
+                />
+
                 <input
                   type="text"
                   placeholder="Contact Phone Number"
