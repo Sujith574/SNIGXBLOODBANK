@@ -1,8 +1,16 @@
 const asyncHandler = require('../config/asyncHandler');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Hospital = require('../models/Hospital');
 const BloodRequest = require('../models/BloodRequest');
 const Donor = require('../models/Donor');
+
+function parseObjectId(id) {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return null;
+  }
+  return new mongoose.Types.ObjectId(id);
+}
 
 // GET /api/admin/stats  (admin only)
 const getAdminStats = asyncHandler(async (req, res) => {
@@ -110,17 +118,18 @@ const getHospitalList = asyncHandler(async (req, res) => {
 // POST /api/admin/approve-hospital  (admin only)
 const approveHospital = asyncHandler(async (req, res) => {
   const { hospitalId } = req.body;
+  const parsedHospitalId = parseObjectId(hospitalId);
 
-  if (!hospitalId) {
+  if (!hospitalId || !parsedHospitalId) {
     return res.status(400).json({
       success: false,
-      message: 'hospitalId is required',
+      message: 'Valid hospitalId is required',
       statusCode: 400,
     });
   }
 
   const result = await Hospital.findOneAndUpdate(
-    { user: hospitalId },
+    { user: parsedHospitalId },
     { approvalStatus: 'approved' },
     { new: true }
   );
@@ -143,15 +152,17 @@ const approveHospital = asyncHandler(async (req, res) => {
 // POST /api/admin/approve-user  (admin only)
 const approveUser = asyncHandler(async (req, res) => {
   const { userId } = req.body || {};
-  if (!userId) {
+  const parsedUserId = parseObjectId(userId);
+
+  if (!userId || !parsedUserId) {
     return res.status(400).json({
       success: false,
-      message: 'userId is required',
+      message: 'Valid userId is required',
       statusCode: 400,
     });
   }
 
-  const user = await User.findByIdAndUpdate(userId, { isApproved: true, isSuspended: false }, { new: true });
+  const user = await User.findByIdAndUpdate(parsedUserId, { isApproved: true, isSuspended: false }, { new: true });
   if (!user) {
     return res.status(404).json({
       success: false,
@@ -174,15 +185,17 @@ const approveUser = asyncHandler(async (req, res) => {
 // POST /api/admin/reject-user  (admin only)
 const rejectUser = asyncHandler(async (req, res) => {
   const { userId } = req.body || {};
-  if (!userId) {
+  const parsedUserId = parseObjectId(userId);
+
+  if (!userId || !parsedUserId) {
     return res.status(400).json({
       success: false,
-      message: 'userId is required',
+      message: 'Valid userId is required',
       statusCode: 400,
     });
   }
 
-  const user = await User.findById(userId).select('_id role');
+  const user = await User.findById(parsedUserId).select('_id role');
   if (!user) {
     return res.status(404).json({
       success: false,
@@ -192,9 +205,9 @@ const rejectUser = asyncHandler(async (req, res) => {
   }
 
   await Promise.all([
-    User.deleteOne({ _id: userId }),
-    user.role === 'hospital' ? Hospital.deleteOne({ user: userId }) : Promise.resolve(),
-    user.role === 'donor' ? Donor.deleteOne({ user: userId }) : Promise.resolve(),
+    User.deleteOne({ _id: parsedUserId }),
+    user.role === 'hospital' ? Hospital.deleteOne({ user: parsedUserId }) : Promise.resolve(),
+    user.role === 'donor' ? Donor.deleteOne({ user: parsedUserId }) : Promise.resolve(),
   ]);
 
   return res.status(200).json({
