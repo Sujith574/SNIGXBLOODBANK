@@ -17,28 +17,32 @@ async function seedUsers() {
         email: 'admin@bloodbank.com',
         passwordHash: defaultPasswordHash,
         role: 'admin',
-        isEmailVerified: true
+        isEmailVerified: true,
+        isApproved: true
       },
       {
         name: 'Test Blood Bank',
         email: 'bloodbank@bloodbank.com',
         passwordHash: defaultPasswordHash,
         role: 'bloodbank',
-        isEmailVerified: true
+        isEmailVerified: true,
+        isApproved: true
       },
       {
         name: 'Test Hospital',
         email: 'hospital@bloodbank.com',
         passwordHash: defaultPasswordHash,
         role: 'hospital',
-        isEmailVerified: true
+        isEmailVerified: true,
+        isApproved: true
       },
       {
         name: 'Test Donor',
         email: 'donor@bloodbank.com',
         passwordHash: defaultPasswordHash,
         role: 'donor',
-        isEmailVerified: true
+        isEmailVerified: true,
+        isApproved: true
       }
     ];
 

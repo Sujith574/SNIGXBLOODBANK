@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 
-export type Role = 'admin' | 'bloodbank' | 'hospital';
+export type Role = 'admin' | 'bloodbank' | 'hospital' | 'donor';
 export type AuthUser = {
   id: string;
   role: Role;
@@ -80,4 +80,3 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
-

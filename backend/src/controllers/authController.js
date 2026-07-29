@@ -78,9 +78,10 @@ const register = asyncHandler(async (req, res) => {
     email: email.toLowerCase().trim(),
     passwordHash,
     role: role && ['admin', 'bloodbank', 'hospital', 'donor'].includes(role) ? role : 'bloodbank',
-    isEmailVerified: false, // OTP is required to complete registration flow
-    emailVerificationToken: tokenHash,
-    emailVerificationExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    isEmailVerified: shouldAutoVerify,
+    isApproved: false,
+    emailVerificationToken: shouldAutoVerify ? undefined : tokenHash,
+    emailVerificationExpiresAt: shouldAutoVerify ? undefined : new Date(Date.now() + 60 * 60 * 1000),
   });
 
   // Log OTP for easy development access
@@ -124,7 +125,9 @@ const register = asyncHandler(async (req, res) => {
 
   return res.status(201).json({
     success: true,
-    message: 'Registration successful. Please enter the 6-digit OTP sent to your email address.',
+    message: shouldAutoVerify
+      ? 'Registration successful. Your account is pending admin approval.'
+      : 'Registration successful. Please enter the 6-digit OTP sent to your email address.',
     data: { userId: user._id, email: user.email },
     statusCode: 201,
   });
@@ -173,6 +176,10 @@ const login = asyncHandler(async (req, res) => {
 
   if (!user.isEmailVerified) {
     return res.status(403).json({ success: false, message: 'Please verify your email first', data: null, statusCode: 403 });
+  }
+
+  if (user.role !== 'admin' && user.isApproved === false) {
+    return res.status(403).json({ success: false, message: 'Your account is pending admin approval', data: null, statusCode: 403 });
   }
 
   const ok = await bcrypt.compare(password, user.passwordHash);
@@ -352,4 +359,3 @@ const resendOtp = asyncHandler(async (req, res) => {
 });
 
 module.exports = { register, verifyEmail, login, logout, forgotPassword, resetPassword, verifyOtp, resendOtp };
-

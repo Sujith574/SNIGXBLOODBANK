@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema(
     role: { type: String, enum: ['admin', 'bloodbank', 'hospital', 'donor'], default: 'bloodbank' },
 
     isEmailVerified: { type: Boolean, default: false },
+    isApproved: { type: Boolean, default: true },
     isSuspended: { type: Boolean, default: false },
 
     emailVerificationToken: { type: String },
@@ -22,4 +23,3 @@ const userSchema = new mongoose.Schema(
 );
 
 module.exports = mongoose.model('User', userSchema);
-
